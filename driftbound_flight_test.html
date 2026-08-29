@@ -2172,7 +2172,9 @@ let serverTick    = 0;
 
 function lobbyConnect() {
   const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
-  const ip   = (document.getElementById('lobby-ip').value  || 'localhost').trim();
+    const ipInput = (document.getElementById('lobby-ip').value || '').trim();
+  const autoHost = window.location.hostname;
+  const ip = ipInput || autoHost;
   const isLocal = ip==='localhost'||ip.startsWith('192.')||ip.startsWith('10.');
   const url = isLocal ? 'ws://'+ip+':8080/ws' : 'wss://'+ip+'/ws';
   setLobbyStatus('Connecting to ' + url + '...');
