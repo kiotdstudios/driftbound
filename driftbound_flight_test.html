@@ -1866,64 +1866,72 @@ function drawHUD(speed) {
     ctx.fillText('\u26a0 LOW FUEL', fx, fy + segH + 27);
   }
 
-  // CARGO
-  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
-  // Ship name header
+  // CARGO — ship name + bar + resource rows (only show rows with qty > 0)
   ctx.font = 'bold 18px Courier New'; ctx.fillStyle = '#4FC3C3';
-  ctx.fillText('⬡ ' + ship.shipType.name, LEFT, oreY - 2);
-  // Cargo bar
-  const cUsed = cargoUsed(), cMax = CARGO_LIMIT, cbw = PW - 68;
+  ctx.fillText('⚡ ' + ship.shipType.name, LEFT, oreY - 2);
+
+  const cUsed = cargoUsed(), cMax = ship.shipType.cargoLimit || CARGO_LIMIT, cbw = PW - 68;
   const cPct  = Math.min(cUsed / cMax, 1);
   const cFull = cUsed >= cMax;
   ctx.font = HUD_FONT_SM;
   ctx.fillStyle = cFull ? '#ef4444' : HUD_DIM;
-  ctx.fillText('CARGO  ' + cUsed + '/' + cMax + (cFull ? '  ■ FULL' : ''), LEFT, oreY + 12);
-  ctx.fillStyle = '#0d1520'; ctx.fillRect(LEFT-1, oreY+15, cbw+2, 5);
+  ctx.fillText('CARGO  ' + cUsed + '/' + cMax + (cFull ? '  ■ FULL' : ''), LEFT, oreY + 16);
+  ctx.fillStyle = '#0d1520'; ctx.fillRect(LEFT-1, oreY+19, cbw+2, 5);
   const cGrad = ctx.createLinearGradient(LEFT, 0, LEFT+cbw, 0);
   if (cPct < 0.7)       { cGrad.addColorStop(0,'#4FC3C3'); cGrad.addColorStop(1,'#22aacc'); }
   else if (cPct < 0.95) { cGrad.addColorStop(0,'#D9541E'); cGrad.addColorStop(1,'#ffaa44'); }
   else                  { cGrad.addColorStop(0,'#ff2222'); cGrad.addColorStop(1,'#ff6666'); }
-  ctx.fillStyle = cGrad; ctx.fillRect(LEFT, oreY+16, cbw * cPct, 3);
-  ctx.strokeStyle = '#ffffff18'; ctx.strokeRect(LEFT, oreY+16, cbw, 3);
-  ctx.fillText('CARGO', LEFT, oreY + 28);  // spacer label for layout
-  ctx.fillStyle = ship.ore > 0 ? '#FFD700' : '#FFD70040';
-  ctx.fillText(ship.ore + ' NEBULITE', LEFT + 56, oreY);
+  ctx.fillStyle = cGrad; ctx.fillRect(LEFT, oreY+20, cbw * cPct, 3);
+  ctx.strokeStyle = '#ffffff18'; ctx.strokeRect(LEFT, oreY+20, cbw, 3);
 
-  ctx.font = 'bold 24px monospace';
-  ctx.fillStyle = ship.mineral > 0 ? '#a78bfa' : '#a78bfa40';
-  ctx.fillText('\u2666', LEFT + 14, minY);
-  ctx.font = HUD_FONT_SM;
-  ctx.fillStyle = ship.mineral > 0 ? '#c4b5fd' : '#c4b5fd50';
-  ctx.fillText(ship.mineral + ' MINERAL', LEFT + 30, minY);
-
-  ctx.font = 'bold 24px monospace';
-  ctx.fillStyle = ship.armalcolite > 0 ? '#34d399' : '#34d39940';
-  ctx.fillText('\u25c8', LEFT + 14, armY);
-  ctx.font = HUD_FONT_SM;
-  ctx.fillStyle = ship.armalcolite > 0 ? '#6ee7b7' : '#6ee7b750';
-  ctx.fillText(ship.armalcolite + ' ARMALCOLITE', LEFT + 30, armY);
-
-  // PILOTS ONLINE
-  if (typeof multiMode !== 'undefined' && multiMode) {
-    ctx.font = 'bold 24px monospace'; ctx.fillStyle = '#38bdf8';
-    ctx.fillText('\u25a0', LEFT + 14, pilotY);
-    ctx.font = HUD_FONT_SM; ctx.fillStyle = '#38bdf8';
-    ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 30, pilotY);
+  // Resource rows — only draw if qty > 0
+  let resRowY = oreY + 42;
+  const RES_LH = 28;
+  if (ship.ore > 0) {
+    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#FFD700';
+    ctx.fillText('◆', LEFT + 14, resRowY);
+    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#FFD700';
+    ctx.fillText(ship.ore + ' NEBULITE', LEFT + 32, resRowY);
+    resRowY += RES_LH;
+  }
+  if (ship.mineral > 0) {
+    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#a78bfa';
+    ctx.fillText('♦', LEFT + 14, resRowY);
+    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#c4b5fd';
+    ctx.fillText(ship.mineral + ' MINERAL MAT', LEFT + 32, resRowY);
+    resRowY += RES_LH;
+  }
+  if (ship.armalcolite > 0) {
+    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#34d399';
+    ctx.fillText('◈', LEFT + 14, resRowY);
+    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#6ee7b7';
+    ctx.fillText(ship.armalcolite + ' ARMALCOLITE', LEFT + 32, resRowY);
+    resRowY += RES_LH;
   }
 
-  // ACTION HINTS
+  // PILOTS ONLINE
+    if (typeof multiMode !== 'undefined' && multiMode) {
+    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#38bdf8';
+    ctx.fillText('■', LEFT + 14, resRowY);
+    ctx.font = HUD_FONT_SM; ctx.fillStyle = '#38bdf8';
+    ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 32, resRowY);
+    resRowY += 28;
+  }
+
+    // ACTION HINTS — sit below dynamic resource rows
+  resRowY += 6;
   const canCraft = ship.armalcolite > 0;
   ctx.font = HUD_FONT_SM;
   ctx.fillStyle = canCraft ? '#FFD700' : '#3a3010';
-  ctx.fillText('[C] REFINE', LEFT, hintY);
+  ctx.fillText('[C] REFINE', LEFT, resRowY);
   ctx.fillStyle = canCraft ? HUD_COLOR : '#2a3040';
-  ctx.fillText(ORE_PER_FUEL + ' ORE \u2192 +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, hintY);
+  ctx.fillText(ORE_PER_FUEL + ' ORE → +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, resRowY);
 
   ctx.fillStyle = mineTarget ? '#4FC3C3' : '#2a3a4a';
-  ctx.fillText('[E] MINE', LEFT, hintY + LH);
+  ctx.fillText('[E] MINE', LEFT, resRowY + LH);
   if (mineTarget) {
     ctx.fillStyle = '#4FC3C380';
-    ctx.fillText(Math.round(mineDist) + 'px', LEFT + 72, hintY + LH);
+    ctx.fillText(Math.round(mineDist) + 'px', LEFT + 72, resRowY + LH);
   }
 
   // MINI COMPASS
