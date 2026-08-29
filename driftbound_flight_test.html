@@ -3053,7 +3053,7 @@ function lobbyConnect() {
   socket.onerror = (e) => {
     console.error('[DB] socket.onerror fired');
     console.error('[DB] readyState:', socket ? socket.readyState : 'null');
-    setLobbyStatus('Could not connect — is the server running?');
+    setLobbyStatus('Could not connect. Press ESC or click PLAY SOLO to play offline.');
     socket = null;
   };
   socket.onclose = (e) => {
@@ -3395,6 +3395,11 @@ function drawPlayerIndicator(p, cx, cy, sx, sy) {
              font-size:13px;font-family:monospace;letter-spacing:3px;cursor:pointer;">
       LAUNCH ▶
     </button>
+    <button onclick="(function(){document.getElementById('lobby').style.display='none';if(typeof showToast==='function')showToast('Solo mode — no server', '#64748b');})()"
+      style="margin-top:8px;width:100%;padding:10px;background:transparent;border:1px solid #334155;color:#94a3b8;font-family:monospace;font-size:13px;border-radius:6px;cursor:pointer;letter-spacing:1px;"
+      onmouseover="this.style.borderColor='#64748b';this.style.color='#cbd5e1'"
+      onmouseout="this.style.borderColor='#334155';this.style.color='#94a3b8'"
+    >PLAY SOLO (OFFLINE)</button>
     <div id="lobby-status" style="margin-top:16px;font-size:11px;color:#64748b;text-align:center;min-height:20px;"></div>
   </div>
 </div>

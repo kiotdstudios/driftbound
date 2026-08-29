@@ -1,0 +1,85 @@
+leServerMsg(JSON.parse(ev.data));
+  };
+  socket.onerror = (e) => {
+    console.error('[DB] socket.onerror fired');
+    console.error('[DB] readyState:', socket ? socket.readyState : 'null');
+    setLobbyStatus('Could not connect — is the server running?');
+    socket = null;
+  };
+  socket.onclose = (e) => {
+    console.warn('[DB] socket.onclose — code:', e.code, '| reason:', e.reason, '| wasClean:', e.wasClean);
+    if (multiMode) showToast('Disconnected from server', '#ef4444');
+    multiMode = false; socket = null;
+  };
+}
+
+function setLobbyStatus(msg) {
+  document.getElementById('lobby-status').textContent = msg;
+}
+
+function handleServerMsg(msg) {
+  switch (msg.type) {
+    case 'init':
+      myPid   = msg.pid;
+      myColor = msg.color;
+      multiMode = true;
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      document.getElementById('lobby').style.display = 'none';
+      showToast('Connected as ' + msg.name, myColor);
+      break;
+
+    case 'state':
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      break;
+
+    case 'player_joined':
+      if (msg.player.pid !== myPid) { remotePlayers[msg.player.pid] = msg.player; showToast('⚡ ' + msg.player.name + ' entered the drift', '#38bdf8'); }
+      break;
+
+    case 'player_move':
+      if (msg.pid !== myPid) {
+        remotePlayers[msg.pid] = msg.player;
+      } break;
+
+    case 'player_left':
+      delete remotePlayers[msg.pid];
+      showToast('❖ ' + msg.name + ' disconnected', '#64748b');
+      break;
+
+    case 'asteroid_hit':
+      if (serverAsteroids[msg.aid]) serverAsteroids[msg.aid].hp = msg.hp;
+      break;
+
+    case 'asteroid_destroyed':
+      delete serverAsteroids[msg.aid];
+      serverOres[msg.oid] = msg.ore;
+      serverAsteroids[msg.new_ast.aid] = rehydrateAsteroid(msg.new_ast);
+      break;
+
+    case 'asteroid_sync':
+      for (const a of msg.asteroids) {
+        if (serverAsteroids[a.aid]) {
+          serverAsteroids[a.aid].worldX = a.worldX;
+          serverAsteroids[a.aid].worldY = a.worldY;
+          serverAsteroids[a.aid].angle  = a.angle;
+          rehydrateAsteroid(serverAsteroids[a.aid]);
+        } else {
+          // New asteroid we don't have yet — add and rehydrate
+          serverAsteroids[a.aid] = rehydrateAsteroid(a);
+        }
+      }
+      break;
+
+    case 'ore_collected':
+      delete serverOres[msg.oid];
+      ship.ore = msg.totals.ore; ship.mineral = msg.totals.mineral; ship.armalcolite = msg.to

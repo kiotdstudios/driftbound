@@ -1,0 +1,49 @@
+async function boot() {
+
+  await loadAll();
+
+  initAsteroids();
+
+  // Restore saved progress
+  const hadSave = loadGame();
+  if (hadSave) showToast('GAME LOADED', '#22c55e');
+
+  document.getElementById('loading').style.display = 'none';
+
+  if (debugMode) drawDebug(speed);
+
+  requestAnimationFrame(loop);
+
+}
+
+
+
+// Press ESC in lobby to play solo
+document.addEventListener('keydown', e => {
+  if (e.code === 'Delete' && confirm('Delete save data and reset?')) { deleteSave(); return; }
+  if (e.key === 'Escape') {
+    const lobby = document.getElementById('lobby');
+    if (lobby && lobby.style.display !== 'none') {
+      lobby.style.display = 'none';
+      showToast('Solo mode — no server connected', '#64748b');
+    }
+  }
+});
+
+boot();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRIFTBOUND MULTIPLAYER CLIENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+var socket        = null;  // var avoids TDZ with lobbyConnect
+let myPid         = null;
+let myColor       = '#00ff88';
+let remotePlayers = {};
+let serverAsteroids = {};
+let serverOres    = {};
+let multiMode     = false;
+let serverTick    = 0;
+
+function lobbyConnect() {
