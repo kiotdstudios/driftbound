@@ -217,7 +217,7 @@ const ASTEROID_TYPES = [
   // id          hp  oreMin  oreMax  size        type          loot chance
   { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02 },
   { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02 },
-  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 1.00 },
+  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35 },
 ];
 
 // Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
@@ -312,6 +312,14 @@ const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship)
 
 // Pod definitions — add more types here later
 const POD_TYPES = {
+  // Wreck pod — spawned dynamically on ship death
+  _wreck: {
+    id:         '_wreck',
+    label:      'WRECK',
+    color:      '#f97316',
+    cargoBonus: 0,
+    desc:       'Your lost cargo. Press F to recover.',
+  },
   modular_space_pod: {
     id:       'modular_space_pod',
     label:    'MODULAR POD',
@@ -1172,7 +1180,7 @@ function updateMining() {
         } else if (ore.lootType === 'armalcolite') {
           if (cargoUsed() < CARGO_LIMIT) {
             ship.armalcolite++;
-            showToast('◈ ARMALCOLITE extracted — refine for fuel [' + cargoUsed() + '/' + CARGO_LIMIT + ']', '#34d399');
+            showToast('◈ ARMALCOLITE  [' + ship.armalcolite + ' held]  —  [C] to refine → fuel', '#34d399');
           } else {
             showToast('⚠ CARGO FULL — ARMALCOLITE lost', '#ef4444');
           }
@@ -1429,17 +1437,24 @@ function drawWorldPods(cx, cy) {
 
     // Attach prompt when in range
     if (inRange) {
-      const canAfford = ship.ore >= POD_ATTACH_COST;
-      ctx.font      = '11px Courier New';
-      ctx.fillStyle = canAfford ? '#22c55e' : '#ef4444';
-      const costTxt = canAfford
-        ? `[F]  ATTACH  (${POD_ATTACH_COST} Nebulite)`
-        : `NEED ${POD_ATTACH_COST} NEBULITE  (have ${ship.ore})`;
-      ctx.fillText(costTxt, sx, sy + POD_DISPLAY_SIZE/2 + 22);
-      // Desc line
-      ctx.font      = '10px Courier New';
-      ctx.fillStyle = '#ffffff88';
-      ctx.fillText(podType.desc, sx, sy + POD_DISPLAY_SIZE/2 + 38);
+      ctx.font = '11px Courier New';
+      if (pod.type === '_wreck') {
+        ctx.fillStyle = '#f97316';
+        ctx.fillText('[F] RECOVER CARGO', sx, sy + POD_DISPLAY_SIZE/2 + 22);
+        ctx.font = '10px Courier New'; ctx.fillStyle = '#ffffff88';
+        const c = pod.cargo || {};
+        const inv = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join('  ');
+        ctx.fillText(inv || 'empty', sx, sy + POD_DISPLAY_SIZE/2 + 38);
+      } else {
+        const canAfford = ship.ore >= POD_ATTACH_COST;
+        ctx.fillStyle = canAfford ? '#22c55e' : '#ef4444';
+        const costTxt = canAfford
+          ? `[F]  ATTACH  (${POD_ATTACH_COST} Nebulite)`
+          : `NEED ${POD_ATTACH_COST} NEBULITE  (have ${ship.ore})`;
+        ctx.fillText(costTxt, sx, sy + POD_DISPLAY_SIZE/2 + 22);
+        ctx.font = '10px Courier New'; ctx.fillStyle = '#ffffff88';
+        ctx.fillText(podType.desc, sx, sy + POD_DISPLAY_SIZE/2 + 38);
+      }
     }
     ctx.restore();
   }
@@ -1453,31 +1468,47 @@ function updatePods() {
     const pod  = worldPods[i];
     const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
     if (dist < POD_ATTACH_RANGE) {
-      if (ship.ore >= POD_ATTACH_COST) {
-        ship.ore -= POD_ATTACH_COST;
-        attachedPods.push({ ...POD_TYPES[pod.type], pid: pod.pid });
-        worldPods.splice(i, 1);
 
-        // Apply cargo bonus
-        const podType = POD_TYPES[pod.type];
-        if (podType.cargoBonus) {
-          ship.shipType.cargoLimit += podType.cargoBonus;
-        }
-        showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+      if (pod.type === '_wreck') {
+        // ── Recover wreck cargo ──
+        const c = pod.cargo || {};
+        ship.ore          += (c.ore          || 0);
+        ship.mineral      += (c.mineral      || 0);
+        ship.armalcolite  += (c.armalcolite  || 0);
+        worldPods.splice(i, 1);
+        const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
+        showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
         saveGame();
-        // Burst particles
-        const sx = canvas.width/2, sy = canvas.height/2;
-        for (let p = 0; p < 30; p++) {
+        // Burst particles (orange)
+        for (let p = 0; p < 25; p++) {
           const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
-          particles.push({x:sx,y:sy,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-            life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
+          particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+            life:40+Math.random()*30,maxLife:70,color:'#f97316',size:2+Math.random()*2});
         }
+
       } else {
-        showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        // ── Attach module pod ──
+        if (ship.ore >= POD_ATTACH_COST) {
+          ship.ore -= POD_ATTACH_COST;
+          const podType = POD_TYPES[pod.type];
+          attachedPods.push({ ...podType, pid: pod.pid });
+          worldPods.splice(i, 1);
+          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
+          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+          saveGame();
+          for (let p = 0; p < 30; p++) {
+            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
+          }
+        } else {
+          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        }
       }
       return; // one pod per keypress
     }
   }
+}
 }
 
 function drawAttachedPods(cx, cy) {
@@ -1831,10 +1862,29 @@ function drawHUD(speed) {
     ctx.font='20px Courier New'; ctx.fillStyle='#ff8800';
     ctx.fillText('RESPAWNING IN '+Math.max(0,remaining)+'...',canvas.width/2,canvas.height/2+14);
     ctx.textAlign='left';
-    if (elapsed>=4000) {
-      ship.hp=SHIP_MAX_HP; ship.worldX=(Math.random()-0.5)*300; ship.worldY=(Math.random()-0.5)*300;
-      ship.vx=0; ship.vy=0; ship.destroyed=false; showToast('RESPAWNED','#22c55e');
-    }
+    if (elapsed >= 4000) {
+        // ── Spawn a wreck pod at the death location before wiping cargo ──
+        if (ship.ore > 0 || ship.mineral > 0 || ship.armalcolite > 0) {
+          worldPods.push({
+            pid:     'wreck_' + Date.now(),
+            type:    '_wreck',
+            worldX:  ship.worldX + (Math.random()-0.5)*40,
+            worldY:  ship.worldY + (Math.random()-0.5)*40,
+            angle:   Math.random() * Math.PI * 2,
+            cargo:   { ore: ship.ore, mineral: ship.mineral, armalcolite: ship.armalcolite },
+            label:   'WRECK',
+          });
+        }
+        // ── Wipe cargo on respawn ──
+        ship.ore = 0; ship.mineral = 0; ship.armalcolite = 0;
+        ship.hp = SHIP_MAX_HP;
+        ship.worldX = (Math.random()-0.5)*300;
+        ship.worldY = (Math.random()-0.5)*300;
+        ship.vx = 0; ship.vy = 0;
+        ship.destroyed = false;
+        saveGame();
+        showToast('RESPAWNED — cargo lost. Find your wreck to recover it.', '#f97316');
+      }
   }
 
   // FUEL segments
@@ -1925,7 +1975,7 @@ function drawHUD(speed) {
   ctx.fillStyle = canCraft ? '#FFD700' : '#3a3010';
   ctx.fillText('[C] REFINE', LEFT, resRowY);
   ctx.fillStyle = canCraft ? HUD_COLOR : '#2a3040';
-  ctx.fillText(ORE_PER_FUEL + ' ORE → +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, resRowY);
+  ctx.fillText('1 ARMALCOLITE → +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, resRowY);
 
   ctx.fillStyle = mineTarget ? '#4FC3C3' : '#2a3a4a';
   ctx.fillText('[E] MINE', LEFT, resRowY + LH);
