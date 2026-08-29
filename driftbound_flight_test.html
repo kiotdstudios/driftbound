@@ -219,7 +219,28 @@ const ASTEROID_TYPES = [
 // 10 slots: 3 planet, 4 sm_brown, 3 lg_brown
 
 
+
+// ─── SHIP TYPES ─────────────────────────────────────────────────────────────
+// Each ship has a name, cargo cap, and which cargo types it accepts.
+// Future ships can restrict to one type (e.g. fuel-only freighter).
+const SHIP_TYPES = {
+  vagrant: {
+    name:       'VAGRANT',
+    cargoLimit: 50,
+    accepts:    ['ore', 'armalcolite'],   // Nebulite + Armalcolite share hold
+    desc:       'General-purpose miner. Carries 50 units of mixed mineral cargo.'
+  },
+};
+
+const SHIP_TYPE    = SHIP_TYPES.vagrant;
+const CARGO_LIMIT  = SHIP_TYPE.cargoLimit;
+
 // Rehydrate a server asteroid: attach full type object from ASTEROID_TYPES by type_id
+
+// Total cargo units used (Nebulite + Armalcolite share the hold)
+function cargoUsed() { return ship.ore + ship.armalcolite; }
+function cargoFull()  { return cargoUsed() >= CARGO_LIMIT; }
+
 function rehydrateAsteroid(a) {
   if (a.type && a.type.w) return a;  // already has full type, nothing to do
   const t = ASTEROID_TYPES.find(t => t.id === a.type_id);
@@ -503,6 +524,7 @@ const ship = {
 
   boostRamp: 0,   // 0=cruise, 1=full boost
 
+  shipType:   SHIP_TYPE,  // which ship this is
   ore:        0,   // Nebulite ore in cargo
   mineral:    0,   // Craftable mineral material (2% drop from brown asteroids)
   armalcolite:0,   // Fuel ore from lg_planet — refine with C key
@@ -1081,10 +1103,13 @@ function updateMining() {
     const d = Math.hypot(ore.worldX - camX, ore.worldY - camY);
 
     if (d < ORE_COLLECT_R) {
+      const space = CARGO_LIMIT - cargoUsed();
+      if (space <= 0) { showToast('⚠ CARGO FULL — ' + cargoUsed() + '/' + CARGO_LIMIT, '#ef4444'); orePickups.splice(i, 1); continue; }
+      const take = Math.min(ore.amount, space);
 
-      ship.ore += ore.amount;
+      ship.ore += take;
 
-      showToast('+' + ore.amount + ' NEBULITE');
+      showToast('+' + take + ' NEBULITE  [' + cargoUsed() + '/' + CARGO_LIMIT + ']');
 
       // Loot drop — check parent asteroid's loot
       if (ore.lootType && Math.random() < ore.lootChance) {
@@ -1092,8 +1117,12 @@ function updateMining() {
           ship.mineral++;
           showToast('✦ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
         } else if (ore.lootType === 'armalcolite') {
-          ship.armalcolite++;
-          showToast('◈ ARMALCOLITE extracted — refine for fuel (' + ship.armalcolite + ' held)', '#34d399');
+          if (cargoUsed() < CARGO_LIMIT) {
+            ship.armalcolite++;
+            showToast('◈ ARMALCOLITE extracted — refine for fuel [' + cargoUsed() + '/' + CARGO_LIMIT + ']', '#34d399');
+          } else {
+            showToast('⚠ CARGO FULL — ARMALCOLITE lost', '#ef4444');
+          }
         }
       }
 
@@ -1637,7 +1666,24 @@ function drawHUD(speed) {
 
   // CARGO
   ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
-  ctx.fillText('CARGO', LEFT, oreY);
+  // Ship name header
+  ctx.font = 'bold 9px Courier New'; ctx.fillStyle = '#4FC3C3';
+  ctx.fillText('⬡ ' + ship.shipType.name, LEFT, oreY - 2);
+  // Cargo bar
+  const cUsed = cargoUsed(), cMax = CARGO_LIMIT, cbw = PW - 36;
+  const cPct  = Math.min(cUsed / cMax, 1);
+  const cFull = cUsed >= cMax;
+  ctx.font = HUD_FONT_SM;
+  ctx.fillStyle = cFull ? '#ef4444' : HUD_DIM;
+  ctx.fillText('CARGO  ' + cUsed + '/' + cMax + (cFull ? '  ■ FULL' : ''), LEFT, oreY + 12);
+  ctx.fillStyle = '#0d1520'; ctx.fillRect(LEFT-1, oreY+15, cbw+2, 5);
+  const cGrad = ctx.createLinearGradient(LEFT, 0, LEFT+cbw, 0);
+  if (cPct < 0.7)       { cGrad.addColorStop(0,'#4FC3C3'); cGrad.addColorStop(1,'#22aacc'); }
+  else if (cPct < 0.95) { cGrad.addColorStop(0,'#D9541E'); cGrad.addColorStop(1,'#ffaa44'); }
+  else                  { cGrad.addColorStop(0,'#ff2222'); cGrad.addColorStop(1,'#ff6666'); }
+  ctx.fillStyle = cGrad; ctx.fillRect(LEFT, oreY+16, cbw * cPct, 3);
+  ctx.strokeStyle = '#ffffff18'; ctx.strokeRect(LEFT, oreY+16, cbw, 3);
+  ctx.fillText('CARGO', LEFT, oreY + 28);  // spacer label for layout
   ctx.fillStyle = ship.ore > 0 ? '#FFD700' : '#FFD70040';
   ctx.fillText(ship.ore + ' NEBULITE', LEFT + 56, oreY);
 
