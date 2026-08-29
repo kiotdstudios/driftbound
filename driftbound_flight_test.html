@@ -2172,15 +2172,17 @@ let serverTick    = 0;
 
 function lobbyConnect() {
   const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
-  const ipInput = (document.getElementById('lobby-ip').value || '').trim();
+  const rawInput = (document.getElementById('lobby-ip').value || '').trim();
+  // Strip protocol if browser autofilled the full URL
+  const ipInput = rawInput.replace(/^https?:\/\//, '').replace(/\/$/, '');
   const autoHost = window.location.hostname;
   const ip = ipInput || autoHost;
   const isLocal = ip==='localhost'||ip.startsWith('192.')||ip.startsWith('10.');
   const url = isLocal ? 'ws://'+ip+':8080/ws' : 'wss://'+ip+'/ws';
   console.log('[DB] lobbyConnect() called');
   console.log('[DB] window.location.hostname =', autoHost);
-  console.log('[DB] window.location.href =', window.location.href);
-  console.log('[DB] ipInput (from field) =', JSON.stringify(ipInput));
+  console.log('[DB] rawInput =', JSON.stringify(rawInput));
+  console.log('[DB] ipInput (cleaned) =', JSON.stringify(ipInput));
   console.log('[DB] ip resolved =', ip);
   console.log('[DB] isLocal =', isLocal);
   console.log('[DB] WebSocket URL =', url);
