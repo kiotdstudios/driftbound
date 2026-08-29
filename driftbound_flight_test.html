@@ -603,7 +603,7 @@ const orePickups   = [];
 
 const toRespawn    = [];  // { timer } queue for delayed respawns
 
-let   mineTarget   = null; _ePressed = false;
+let   mineTarget   = null;
 
 let   mineDist     = Infinity;
 
@@ -2572,7 +2572,7 @@ function update() {
 
   // Smooth boost ramp: 0=cruise, 1=full boost
 
-  if (interiorMode) { requestAnimationFrame(gameLoop); return; }
+  if (interiorMode) { requestAnimationFrame(loop); return; }
   const shiftHeld = (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
 
   if (shiftHeld) {
@@ -2955,6 +2955,46 @@ function tickAutoSave() {
     saveGame();
   }
 }
+
+// Autofill saved username
+  const savedName = localStorage.getItem('driftbound_username');
+  if (savedName) {
+    const nameField = document.getElementById('lobby-name');
+    if (nameField) nameField.value = savedName;
+  }
+
+  const field = document.getElementById('lobby-ip');
+  if (field && !field.value) {
+    field.value = window.location.hostname;
+    field.placeholder = window.location.hostname;
+  }
+});
+
+canvas.addEventListener('mousedown', function(e) {
+  if (interiorMode && weapon && weapon.ammo > 0 && shootCooldown === 0) {
+    const rect2  = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / rect2.width;
+    const scaleY = canvas.height / rect2.height;
+    const offX2  = (canvas.width  - ARMORY_MAP[0].length * TILE) / 2;
+    const offY2  = (canvas.height - ARMORY_MAP.length    * TILE) / 2;
+    const mx2 = ((e.clientX - rect2.left) * scaleX - offX2) / TILE;
+    const my2 = ((e.clientY - rect2.top)  * scaleY - offY2) / TILE;
+    const dx2 = mx2 - iPlayerX, dy2 = my2 - iPlayerY;
+    const dist2 = Math.hypot(dx2, dy2);
+    if (dist2 > 0.01) {
+      projectiles.push({ x: iPlayerX, y: iPlayerY,
+        vx: (dx2/dist2)*PROJ_SPEED, vy: (dy2/dist2)*PROJ_SPEED,
+        owner: 'player', life: PROJ_LIFE });
+      weapon.ammo--;
+      shootCooldown = SHOOT_CD;
+    }
+  }
+});
+
+</script>
+</body>
+
+</html>
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
@@ -3404,43 +3444,4 @@ function drawPlayerIndicator(p, cx, cy, sx, sy) {
 <script>
 // Pre-fill lobby IP with current hostname so it's always correct
 document.addEventListener('DOMContentLoaded', () => {
-  // Autofill saved username
-  const savedName = localStorage.getItem('driftbound_username');
-  if (savedName) {
-    const nameField = document.getElementById('lobby-name');
-    if (nameField) nameField.value = savedName;
-  }
-
-  const field = document.getElementById('lobby-ip');
-  if (field && !field.value) {
-    field.value = window.location.hostname;
-    field.placeholder = window.location.hostname;
-  }
-});
-
-canvas.addEventListener('mousedown', function(e) {
-  if (interiorMode && weapon && weapon.ammo > 0 && shootCooldown === 0) {
-    const rect2  = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect2.width;
-    const scaleY = canvas.height / rect2.height;
-    const offX2  = (canvas.width  - ARMORY_MAP[0].length * TILE) / 2;
-    const offY2  = (canvas.height - ARMORY_MAP.length    * TILE) / 2;
-    const mx2 = ((e.clientX - rect2.left) * scaleX - offX2) / TILE;
-    const my2 = ((e.clientY - rect2.top)  * scaleY - offY2) / TILE;
-    const dx2 = mx2 - iPlayerX, dy2 = my2 - iPlayerY;
-    const dist2 = Math.hypot(dx2, dy2);
-    if (dist2 > 0.01) {
-      projectiles.push({ x: iPlayerX, y: iPlayerY,
-        vx: (dx2/dist2)*PROJ_SPEED, vy: (dy2/dist2)*PROJ_SPEED,
-        owner: 'player', life: PROJ_LIFE });
-      weapon.ammo--;
-      shootCooldown = SHOOT_CD;
-    }
-  }
-});
-
-</script>
-</body>
-
-</html>
 
