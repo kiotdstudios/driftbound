@@ -1464,6 +1464,7 @@ function updatePods() {
           ship.shipType.cargoLimit += podType.cargoBonus;
         }
         showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+        saveGame();
         // Burst particles
         const sx = canvas.width/2, sy = canvas.height/2;
         for (let p = 0; p < 30; p++) {
@@ -1480,17 +1481,24 @@ function updatePods() {
 }
 
 function drawAttachedPods(cx, cy) {
-  if (!attachedPods.length) return;
-  // Draw small icons on HUD (top-right corner)
+  // Draw modules + save indicator top-right
   ctx.save();
   ctx.textAlign = 'right';
   ctx.font = '11px Courier New';
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillText('MODULES:', canvas.width - 14, 28);
-  attachedPods.forEach((p, i) => {
-    ctx.fillStyle = p.color || '#38bdf8';
-    ctx.fillText('⬡ ' + p.label, canvas.width - 14, 28 + (i+1)*16);
-  });
+  // Auto-save flash indicator
+  const saveFlash = _autoSaveTimer > 1780;   // last 20 frames of 30s cycle
+  if (saveFlash) {
+    ctx.fillStyle = '#22c55e';
+    ctx.fillText('● SAVING...', canvas.width - 14, 16);
+  }
+  if (attachedPods.length) {
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText('MODULES:', canvas.width - 14, 28);
+    attachedPods.forEach((p, i) => {
+      ctx.fillStyle = p.color || '#38bdf8';
+      ctx.fillText('⬡ ' + p.label, canvas.width - 14, 28 + (i+1)*16);
+    });
+  }
   ctx.restore();
 }
 
@@ -2422,6 +2430,7 @@ function loop(now) {
   if (speed > SPEED_THRESH) spawnThrust(cx, cy, ship.dir, speed);
 
   tickParticles();
+  tickAutoSave();
 
   drawParticles();
 
@@ -2454,6 +2463,91 @@ function loop(now) {
 
 
 
+// ─── SAVE / LOAD ─────────────────────────────────────────────────────────────
+
+const SAVE_KEY = 'driftbound_save_v1';
+
+function saveGame() {
+  const data = {
+    worldX:       ship.worldX,
+    worldY:       ship.worldY,
+    ore:          ship.ore,
+    mineral:      ship.mineral,
+    armalcolite:  ship.armalcolite,
+    fuel:         ship.fuel,
+    hp:           ship.hp,
+    cargoLimit:   ship.shipType.cargoLimit,
+    attachedPods: attachedPods.map(p => p.pid),
+    worldPodsLeft: worldPods.map(p => p.pid),
+    savedAt:      Date.now(),
+  };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e) { console.warn('Save failed:', e); }
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+
+    ship.worldX       = data.worldX       || 0;
+    ship.worldY       = data.worldY       || 0;
+    ship.ore          = data.ore          || 0;
+    ship.mineral      = data.mineral      || 0;
+    ship.armalcolite  = data.armalcolite  || 0;
+    ship.fuel         = data.fuel         ?? FUEL_CAPACITY;
+    ship.hp           = data.hp           ?? 100;
+
+    // Restore cargo limit (pod bonuses)
+    if (data.cargoLimit && data.cargoLimit > CARGO_LIMIT) {
+      ship.shipType.cargoLimit = data.cargoLimit;
+    }
+
+    // Restore attached pods
+    if (data.attachedPods) {
+      data.attachedPods.forEach(pid => {
+        // Find which pod type this was
+        const wpod = worldPods.find(p => p.pid === pid);
+        if (wpod) {
+          attachedPods.push({ ...POD_TYPES[wpod.type], pid });
+        }
+      });
+    }
+
+    // Remove world pods that were already collected
+    if (data.worldPodsLeft) {
+      for (let i = worldPods.length - 1; i >= 0; i--) {
+        if (!data.worldPodsLeft.includes(worldPods[i].pid)) {
+          worldPods.splice(i, 1);
+        }
+      }
+    }
+
+    return true;
+  } catch(e) {
+    console.warn('Load failed:', e);
+    return false;
+  }
+}
+
+function deleteSave() {
+  localStorage.removeItem(SAVE_KEY);
+  showToast('SAVE DELETED — RELOADING...', '#ef4444');
+  setTimeout(() => location.reload(), 1500);
+}
+
+// Auto-save every 30 seconds + on key events
+let _autoSaveTimer = 0;
+function tickAutoSave() {
+  _autoSaveTimer++;
+  if (_autoSaveTimer >= 1800) {   // 30s at 60fps
+    _autoSaveTimer = 0;
+    saveGame();
+  }
+}
+
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -2461,6 +2555,10 @@ async function boot() {
   await loadAll();
 
   initAsteroids();
+
+  // Restore saved progress
+  const hadSave = loadGame();
+  if (hadSave) showToast('GAME LOADED', '#22c55e');
 
   document.getElementById('loading').style.display = 'none';
 
@@ -2474,6 +2572,7 @@ async function boot() {
 
 // Press ESC in lobby to play solo
 document.addEventListener('keydown', e => {
+  if (e.code === 'Delete' && confirm('Delete save data and reset?')) { deleteSave(); return; }
   if (e.key === 'Escape') {
     const lobby = document.getElementById('lobby');
     if (lobby && lobby.style.display !== 'none') {
