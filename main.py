@@ -153,11 +153,10 @@ async def main():
     app.router.add_get('/', lambda r: web.FileResponse('driftbound_flight_test.html'))
     app.router.add_get('/driftbound_flight_test.html', lambda r: web.FileResponse('driftbound_flight_test.html'))
 
-    # Static asset folders
-    app.router.add_static('/pod_sprites',                    'pod_sprites',                    show_index=False)
-    app.router.add_static('/space_parallax_backgrounds_v1',  'space_parallax_backgrounds_v1',  show_index=False)
-    app.router.add_static('/Demo_assets',                    'Demo_assets',                    show_index=False)
-    app.router.add_static('/vapor_bg',                       'vapor_bg',                 show_index=False)
+    # Static asset folders (space_parallax_backgrounds_v1 removed — assets are now inline)
+    app.router.add_static('/pod_sprites',  'pod_sprites',  show_index=False)
+    app.router.add_static('/Demo_assets',  'Demo_assets',  show_index=False)
+    app.router.add_static('/vapor_bg',     'vapor_bg',     show_index=False)
 
     runner = web.AppRunner(app)
     await runner.setup()
