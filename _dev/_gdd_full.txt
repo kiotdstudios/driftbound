@@ -1,0 +1,154 @@
+[000] DRIFTBOUND
+[001] GAME DESIGN DOCUMENT - V1.0
+[002] Top-down 2D Pixel Space Action RPG
+Survive the void. Salvage the dead. Build a home among the stars.
+[003] 1. Project North Star
+[004] Driftbound is a top-down 2D pixel-art space survival action RPG. The player begins alone inside a damaged escape pod, with limited oxygen, power, tools, and information. The defining mechanic is that the player's ship is not selected from a menu or upgraded as a single object: it is physically assembled by discovering, clearing, repairing, docking, and repurposing abandoned pods found throughout space.
+[005] Every successful expedition should visibly change the player's home. The emotional arc is: stranded -> capable -> established -> powerful -> curious about what happened here.
+[006] Design Pillars
+[007] BUILD THE SHIP YOU LIVE IN - progression must be physically visible in the connected pod layout.
+[008] DISCOVERY HAS CONSEQUENCES - an unknown pod can contain safety, loot, enemies, survivors, hazards, or story.
+[009] SURVIVAL WITHOUT BUSYWORK - oxygen, power, hull condition, and resources create decisions, not constant chores.
+[010] SMALL-SCALE SPACE FEELS PERSONAL - the player's character, rooms, tools, and objects should remain readable and tactile.
+[011] MYSTERY DRIVES EXPLORATION - every region and derelict should answer one question while creating another.
+[012] 2. Player Fantasy & Core Loop
+[013] Player fantasy: "I started with almost nothing, survived the void, and built this strange ship myself from what I found."
+[014] Scan nearby space and choose a destination, wreck, asteroid field, signal, or unidentified pod.
+[015] Travel/explore while managing immediate risks such as oxygen, hazards, hostile life, machines, or debris.
+[016] Gather salvage: scrap, metals, crystals, circuitry, fuel, fibers, biological material, blueprints, and rare components.
+[017] Enter or breach discovered structures and clear hazards/enemies.
+[018] Decide whether a pod is worth recovering.
+[019] Repair or craft the required docking/connection components.
+[020] Attach the pod to the player's growing ship.
+[021] Restore, specialize, furnish, or repurpose the new room.
+[022] Craft better gear and ship systems, opening access to more dangerous regions.
+[023] Follow signals and environmental clues toward the larger mystery.
+[024] 3. Camera, Presentation & Art Direction
+[025] Camera: top-down / slight three-quarter top-down readability inspired by classic handheld monster-catching RPG map presentation, but NOT a direct visual copy.
+[026] Rendering target: modern high-detail pixel art; visually closer to a contemporary '32/64-bit-feeling' pixel production than strict 16-bit limitations.
+[027] Tile-based environments with enough detail to make machinery, doors, consoles, pipes, storage, hazards, and room identity immediately readable.
+[028] Lighting is important: emissive screens, warning lights, suit lamps, nebula glow, weapon effects, darkness in unpowered pods.
+[029] Animations should be smoother than classic handheld RPGs while retaining deliberate pixel construction.
+[030] Space exterior: deep dark backgrounds, colorful nebulae, drifting debris, distant stars, asteroids, derelicts, resource clusters.
+[031] Interior palette: dark industrial metals with strong room-specific accent colors and readable silhouettes.
+[032] 4. Player & Controls
+[033] 5. Ship & Pod System - Signature Feature
+[034] The ship is a connected graph of physical rooms/pods. A pod has docking points. Once recovered, it can be attached to a valid docking point and becomes part of the playable interior. The player walks through the actual connected rooms.
+[035] Pod Recovery States
+[036] Detected - appears as a signal/contact.
+[037] Identified - scan reveals partial information (type, damage, danger, unknowns).
+[038] Boarded - player enters the pod.
+[039] Secured - enemies/hazards/objectives are resolved.
+[040] Recoverable - docking requirements are known.
+[041] Attached - physically connected to the ship.
+[042] Restored - power/oxygen/basic functionality repaired.
+[043] Specialized - upgraded or repurposed for a chosen function.
+[044] Example Pod Types
+[045] Armory - weapons, ammo/energy cells, weapon bench, upgrade slots.
+[046] Workshop/Fabricator - advanced crafting and repair recipes.
+[047] Med Bay - healing, status recovery, biological research.
+[048] Hydroponics/Garden - renewable biological resources and food/oxygen bonuses.
+[049] Storage/Cargo - expands storage and logistics.
+[050] Reactor/Power - increases ship power budget.
+[051] Life Support - oxygen capacity, filtration, expedition support.
+[052] Navigation/Scanner - better map data, signal detection, route options.
+[053] Crew Quarters - survivor/companion capacity.
+[054] Research Lab - analyzes artifacts, organisms, technology, and story items.
+[055] Unknown/Unique Pods - one-off story or mechanic rooms.
+[056] 6. Exploration Structure
+[057] The game should feel like traveling through connected pockets of space rather than walking on a giant empty map. Regions contain navigable exterior zones and points of interest: wrecks, resource clusters, distress signals, stations, asteroids, anomalies, hostile nests, and drifting pods.
+[058] Early region: relatively safe salvage field; teaches movement, oxygen, salvage, first docking.
+[059] Mid regions: stronger hazards, locked systems, hostile factions/robots/organisms, multi-room derelicts.
+[060] Late regions: severe environmental conditions, rare resources, high-value pods, major story structures.
+[061] Exploration must regularly return something useful: materials, blueprint, pod, lore, shortcut, survivor, upgrade, or new signal.
+[062] 7. Combat
+[063] Combat is real-time top-down action combat, not turn-based. It should be readable, quick, and dangerous enough that entering an unidentified pod creates tension.
+[064] MVP weapon: pulse rifle or compact energy weapon with aim/fire/reload or heat behavior.
+[065] Melee/tool option: plasma cutter or salvage tool that can double as an emergency weapon.
+[066] Enemies telegraph attacks clearly; pixel effects should not obscure hit readability.
+[067] Environmental combat can include explosive canisters, electrical panels, vacuum breaches, doors, cover-like machinery.
+[068] Enemy categories can include malfunctioning security machines, scavengers, alien organisms, infected/altered entities, and later intelligent factions.
+[069] 8. Resources, Crafting & Economy
+[070] Crafting Rules
+[071] Crafting begins simple: health pack, oxygen tank/refill, repair kit, basic ammunition/energy, docking component.
+[072] Blueprints unlock new recipes; important progression recipes should be discoverable through exploration rather than random grind.
+[073] Advanced crafting should depend on specialized rooms such as Workshop, Armory, Med Bay, or Research Lab.
+[074] Do not overload the game with dozens of near-identical resources during MVP.
+[075] 9. Progression
+[076] CHARACTER: suit capacity, health, oxygen, movement, tool efficiency, weapon handling.
+[077] EQUIPMENT: weapon tiers, mods, salvage tools, scanner, protection modules.
+[078] SHIP: more pods, more docking options, power, storage, life support, scanner range, travel capability.
+[079] KNOWLEDGE: blueprints, map information, decoded logs, faction/alien understanding.
+[080] ACCESS: new regions require combinations of ship capability, equipment, and story discoveries.
+[081] Progression should avoid simple stat inflation as the only reward. The best upgrades unlock a new action, destination, room function, strategy, or way to solve a problem.
+[082] 10. Narrative Framework
+[083] The opening intentionally provides limited context. The player awakens or regains control in a damaged pod and must solve immediate survival problems before understanding the larger situation. Story is delivered primarily through environmental evidence, recovered logs, strange signals, unique pods, survivors, and major derelicts.
+[084] Central question: Why is this region filled with disconnected pods and wreckage, and what caused the collapse/disaster?
+[085] Secondary question: Who was the player before becoming stranded, and why were they here?
+[086] The ship itself becomes a record of the player's journey: recovered rooms can retain markings, damage, logs, or artifacts from prior owners.
+[087] Avoid locking the final lore too early; prototype the gameplay mystery first, then write canon around the strongest mechanics.
+[088] 11. UI / UX
+[089] HUD: Health, shield/suit integrity if used, oxygen, compact objective, quick-access hotbar.
+[090] Map/scanner: nearby signals, known pods, resources, hazards, home ship marker.
+[091] Pod interaction: clear options such as Scan, Board, Connect, Leave; show docking requirements.
+[092] Ship layout screen: readable top-down connected-room diagram with power/function status.
+[093] Crafting: blueprint list, item preview, required materials, owned/required counts, craft action.
+[094] Inventory/resource UI should favor icon + name + count; never rely on color alone.
+[095] 12. MVP / Vertical Slice
+[096] The first playable milestone should prove the pod fantasy before building a large universe.
+[097] 1 playable character with 8-direction movement and basic animations.
+[098] 1 starting escape pod/home room.
+[099] 1 small exterior space/salvage region.
+[100] 3 resource types minimum.
+[101] 1 craft station and 4-6 useful recipes.
+[102] 1 ranged weapon + 1 salvage/melee tool.
+[103] 2 enemy types.
+[104] 3 discoverable pods: Armory, Workshop, and one mystery/utility pod.
+[105] Boarding, clearing, repairing, docking, and physically walking into an attached pod.
+[106] Basic ship power/oxygen logic.
+[107] One short narrative thread leading to a larger signal.
+[108] Save/load.
+[109] VERTICAL SLICE SUCCESS TEST: A new player should be able to start stranded, leave home, gather salvage, fight or evade danger, discover a pod, acquire the resources to recover it, attach it, enter the newly expanded ship, and use the new room function within one short session.
+[110] 13. Explicit Non-Goals for Early Development
+[111] No procedural galaxy at MVP.
+[112] No massive open-world map.
+[113] No multiplayer until the single-player pod loop is proven.
+[114] No dozens of weapons, resources, factions, or biomes before the core loop works.
+[115] No fully simulated orbital physics requirement.
+[116] No turn-based combat unless playtesting shows action combat fundamentally fails.
+[117] Do not build decorative ship customization before pod connection, room function, and exploration are fun.
+[118] 14. Rules for the Game Design Agent
+[119] Treat the modular pod/ship system as the game's primary differentiator. Do not remove or reduce it to a menu-only upgrade system.
+[120] When proposing features, explain how they improve exploration, survival, pod discovery, ship growth, combat, or mystery.
+[121] Prioritize a playable vertical slice over content volume.
+[122] Keep systems understandable enough for a solo/small-team 2D project unless explicitly told to expand scope.
+[123] Use placeholders for undecided lore rather than inventing permanent canon without approval.
+[124] Maintain top-down modern pixel-art readability in all environment, UI, enemy, and animation recommendations.
+[125] Every new resource must have a distinct gameplay purpose. Avoid resource bloat.
+[126] Every pod type must create a meaningful function, decision, or story payoff.
+[127] When designing a region, include: visual identity, hazard, resources, enemy set, pod opportunities, story clue, and progression requirement.
+[128] When designing an enemy, include: silhouette, behavior, attack telegraph, counterplay, drops, and why it belongs in that region.
+[129] When designing an item or upgrade, specify acquisition, recipe/cost, effect, progression tier, and what new decision it enables.
+[130] Flag any suggestion that materially increases scope before implementing it.
+[131] 15. Open Design Questions
+[132] Does the character physically fly/jet through exterior space, pilot the starting pod, or use a small EVA craft?
+[133] How freeform is pod placement: fixed docking nodes, grid-based attachment, or limited structural rules?
+[134] Can pods be detached/rearranged later?
+[135] Is ship power a global budget or room-by-room network?
+[136] How punishing should oxygen be?
+[137] Death model: reload, rescue/recovery, dropped salvage, clone/med system, or another fiction?
+[138] Will friendly survivors/crew eventually inhabit recovered rooms?
+[139] Hand-authored regions only, procedural encounter placement, or hybrid?
+[140] Final title: Driftbound or replacement?
+[141] 16. Immediate Production Order
+[142] Lock movement scale, character sprite size, tile size, and camera framing.
+[143] Prototype one starting pod interior.
+[144] Prototype one exterior salvage area.
+[145] Implement interaction + inventory + three resources.
+[146] Implement crafting for repair/docking component.
+[147] Create one abandoned pod with a hostile encounter.
+[148] Implement pod secured state and docking.
+[149] Make attached pod become a seamless walkable room on the home ship.
+[150] Add one functional reward inside it (Armory recommended).
+[151] Only after this loop feels good: expand enemies, rooms, regions, story, and progression.
+[152] DRIFTBOUND - V1 DESIGN NORTH STAR
