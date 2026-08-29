@@ -1,0 +1,2378 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>DRIFTBOUND — Flight Test v0.2</title>
+
+<style>
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+
+  canvas { display: block; image-rendering: pixelated; }
+
+
+
+  #loading {
+
+    position: fixed; inset: 0; background: #070b12;
+
+    display: flex; flex-direction: column;
+
+    align-items: center; justify-content: center;
+
+    z-index: 100; color: #4FC3C3;
+
+  }
+
+  #loading h1 {
+
+    font-size: 36px; letter-spacing: 10px;
+
+    color: #fff; text-shadow: 0 0 30px #4FC3C3; margin-bottom: 8px;
+
+  }
+
+  #loading .sub {
+
+    font-size: 11px; letter-spacing: 4px; color: #4FC3C3;
+
+    margin-bottom: 32px; opacity: 0.7;
+
+  }
+
+  #loadbar-wrap { width: 280px; height: 3px; background: #1a2035; border: 1px solid #4FC3C3; }
+
+  #loadbar { height: 100%; background: #4FC3C3; width: 0%; transition: width 0.05s; }
+
+  #loadtext { margin-top: 10px; font-size: 10px; color: #4a5a6a; letter-spacing: 2px; }
+
+  #controls {
+
+    position: fixed; top: 24px; right: 24px;
+
+    color: #4FC3C3cc; font-size: 10px;
+
+    text-align: right; letter-spacing: 1px;
+
+    pointer-events: none; line-height: 1.8;
+
+    background: #000000bb;
+
+    padding: 8px 12px;
+
+    border: 1px solid #4FC3C333;
+
+    font-family: 'Courier New', monospace;
+
+  }
+
+  #title-badge {
+
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+
+    font-size: 13px; letter-spacing: 6px; color: #ffffff18; pointer-events: none;
+
+  }
+
+</style>
+
+</head>
+
+<body>
+
+
+
+<div id="loading">
+
+  <h1>DRIFTBOUND</h1>
+
+  <div class="sub">FLIGHT TEST v0.2</div>
+
+  <div id="loadbar-wrap"><div id="loadbar"></div></div>
+
+  <div id="loadtext">INITIALIZING...</div>
+
+</div>
+
+
+
+<canvas id="game"></canvas>
+
+
+
+
+
+<div id="controls">
+
+  WASD / ARROWS &mdash; DRIFT<br>
+
+  SHIFT &mdash; BOOST (burns fuel)<br>
+
+  SPACE &mdash; BRAKE<br>
+
+  [ / ] &mdash; CHANGE MAP<br>
+
+  E &mdash; MINE ASTEROID<br>
+
+  C &mdash; REFINE ORE &rarr; FUEL
+
+</div>
+
+
+
+<div id="title-badge">DRIFTBOUND</div>
+
+
+
+<script>
+
+document.querySelectorAll('canvas').forEach((c, i) => { if (i > 0) c.remove(); });
+
+const canvas = document.getElementById('game');
+
+const ctx    = canvas.getContext('2d');
+
+ctx.imageSmoothingEnabled = false;
+
+
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
+const SPRITE_SIZE   = 68;
+
+const DISPLAY_SCALE = 2;
+
+const DISPLAY_SIZE  = SPRITE_SIZE * DISPLAY_SCALE;   // 136px
+
+
+
+const NORMAL_MAX   = 0.65;  // default drift cap — slow, floaty
+
+const BOOST_MAX    = 5.28;  // shift-hold cap — burns fuel, fast
+
+const BOOST_THRUST = 0.42;  // higher thrust while Shift held — punchy acceleration
+
+const BOOST_RAMP_UP   = 0.022; // ramp to full boost: ~45 frames — slow engine spool
+
+const BOOST_RAMP_DOWN = 0.006; // ramp back to cruise: ~167 frames — long inertia coast
+
+const THRUST       = 0.18;
+
+const FRICTION     = 0.984;
+
+const BRAKE        = 0.88;
+
+const SPEED_THRESH = 0.12;
+
+
+
+// ─── HEALTH / COLLISION ───────────────────────────────────────────────────────────
+
+const SHIP_MAX_HP      = 100;
+
+const COLLISION_BOUNCE = 0.45;
+
+const COLLISION_DAMAGE = 8;
+
+const COLLISION_IFRAMES= 60;
+
+const COLLISION_RADIUS = 28;
+
+
+
+// ─── ASTEROID / MINING ──────────────────────────────────────────────────────
+
+const MINE_RANGE     = 140;    // world-px  — max range to start mining
+
+const MINE_INTERVAL  = 20;     // frames between hits
+
+const MINE_DAMAGE    = 1;      // HP per hit
+
+const ORE_PER_FUEL   = 5;      // Nebulite to craft 1 batch of fuel
+
+const FUEL_PER_CRAFT = 2.0;    // fuel gained per craft batch
+
+const AST_SCALE      = 2;      // pixel scale for asteroid sprites
+
+const AST_COUNT      = 30;     // asteroids alive in world
+
+const WORLD_SPREAD   = 4000;   // max spawn radius
+
+const ORE_COLLECT_R  = 50;     // auto-collect radius
+
+
+
+const ASTEROID_TYPES = [
+  // id          hp  oreMin  oreMax  size        type          loot chance
+  { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02 },
+  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02 },
+  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 1.00 },
+];
+
+// Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
+// 10 slots: 3 planet, 4 sm_brown, 3 lg_brown
+const ASTEROID_POOL = [2, 0,0,0,0, 1,1,1, 2,2];  // index into ASTEROID_TYPES
+
+// In multiMode, server owns asteroid state — use this getter everywhere
+function getAsteroids() {
+  return multiMode ? Object.values(serverAsteroids) : asteroids;
+}
+function getOrePickups() {
+  return multiMode ? Object.values(serverOres) : orePickups;
+}
+
+
+
+const FRAME_COUNT   = 9;
+
+const ANIM_FPS      = 12;
+
+const ANIM_INTERVAL = 1000 / ANIM_FPS;
+
+
+
+// Fuel system — 27 MPG, 10-gal tank. Reliable but basic: Honda energy.
+
+// Burns only on active thrust; coasting is free (space physics).
+
+const FUEL_CAPACITY   = 10.0;
+
+const FUEL_MPG        = 27;
+
+const PIXELS_PER_MILE = 300;
+
+
+
+const DIRS = [
+
+  'north', 'north-east', 'east', 'south-east',
+
+  'south', 'south-west', 'west', 'north-west'
+
+];
+
+const DIR_ANGLES_DEG = [-90, -45, 0, 45, 90, 135, 180, -135];
+
+
+
+const POD_BASE = 'pod_sprites/Create_a_small_modular_spacecr/';
+
+const ANIM_KEY = '8-frame_spaceship_flying_animation._Keep_the_ship';
+
+const BG_BASE  = 'space_parallax_backgrounds_v1/assets/';
+
+
+
+// All 20 available backgrounds — cycle with [ / ]
+
+const BG_SETS = [
+  'vapor_01', 'vapor_03', 'vapor_04', 'vapor_05',
+];
+
+let currentBgIdx = 1;   // vapor_03 default (index 1 in vapor-only list)
+
+
+
+// ─── ASSET LOADING ────────────────────────────────────────────────────────────
+
+let totalAssets  = 0;
+
+let loadedAssets = 0;
+
+const rotations  = {};
+
+const animations = {};
+
+let   bgLayers   = [];
+
+let   bgLoading  = false;
+
+
+
+function loadImg(src) {
+
+  totalAssets++;
+
+  return new Promise(resolve => {
+
+    const img = new Image();
+
+    img.onload  = () => { loadedAssets++; refreshBar(); resolve(img); };
+
+    img.onerror = () => { loadedAssets++; refreshBar(); resolve(null); };
+
+    img.src = src;
+
+  });
+
+}
+
+function refreshBar() {
+
+  const pct = (loadedAssets / totalAssets) * 100;
+
+  document.getElementById('loadbar').style.width = pct + '%';
+
+  document.getElementById('loadtext').textContent =
+
+    `LOADING ASSETS  ${loadedAssets} / ${totalAssets}`;
+
+}
+
+
+
+// Load one named background set (flat + 3 layers)
+
+function loadBgSet(name) {
+
+  bgLoading = true;
+
+  const defs = [
+
+    { file: `flat/${name}_FLAT.png`,     speed: 0.05 },
+
+    { file: `layers/${name}_L1_far.png`, speed: 0.20 },
+
+    { file: `layers/${name}_L2_mid.png`, speed: 0.50 },
+
+    { file: `layers/${name}_L3_near.png`,speed: 1.00 },
+
+  ];
+
+  const jobs = defs.map(d =>
+
+    new Promise(resolve => {
+
+      const img = new Image();
+
+      img.onload  = () => resolve({ img, speed: d.speed });
+
+      img.onerror = () => resolve({ img: null, speed: d.speed });
+
+      img.src = `${BG_BASE}${d.file}`;
+
+    })
+
+  );
+
+  Promise.all(jobs).then(layers => {
+
+    bgLayers  = layers.sort((a, b) => a.speed - b.speed);
+
+    bgLoading = false;
+
+    bgFlash   = { name, timer: 120 };   // show map name for 120 frames
+
+  });
+
+}
+
+
+
+async function loadAll() {
+
+  const jobs = [];
+
+
+
+  for (const dir of DIRS) {
+
+    jobs.push(loadImg(`${POD_BASE}rotations/${dir}.png`).then(img => {
+
+      rotations[dir] = img;
+
+    }));
+
+  }
+
+
+
+  for (const dir of DIRS) {
+
+    animations[dir] = new Array(FRAME_COUNT).fill(null);
+
+    for (let f = 0; f < FRAME_COUNT; f++) {
+
+      const ff  = f;
+
+      const pad = String(f).padStart(3, '0');
+
+      jobs.push(
+
+        loadImg(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`)
+
+          .then(img => { animations[dir][ff] = img; })
+
+      );
+
+    }
+
+  }
+
+
+
+  // Initial BG loaded through normal loadImg so progress bar counts it
+
+  const bgName = BG_SETS[currentBgIdx];
+
+  const bgDefs = [
+
+    { file: `flat/${bgName}_FLAT.png`,     speed: 0.05 },
+
+    { file: `layers/${bgName}_L1_far.png`, speed: 0.20 },
+
+    { file: `layers/${bgName}_L2_mid.png`, speed: 0.50 },
+
+    { file: `layers/${bgName}_L3_near.png`,speed: 1.00 },
+
+  ];
+
+  const bgPromises = bgDefs.map(d =>
+
+    loadImg(`${BG_BASE}${d.file}`).then(img => ({ img, speed: d.speed }))
+
+  );
+
+  jobs.push(Promise.all(bgPromises).then(layers => {
+
+    bgLayers = layers.sort((a, b) => a.speed - b.speed);
+
+  }));
+
+
+
+  // Asteroid sprites
+
+  for (const t of ASTEROID_TYPES) {
+
+    jobs.push(
+
+      loadImg('Demo_assets/asteroids/' + t.id + '.png')
+
+        .then(img => { asteroidImgs[t.id] = img; })
+
+        .catch(() => {})   // skip gracefully if file missing
+
+    );
+
+  }
+
+
+
+  await Promise.all(jobs);
+
+}
+
+
+
+// ─── GAME STATE ───────────────────────────────────────────────────────────────
+
+const ship = {
+
+  worldX: 0, worldY: 0,
+
+  vx: 0,     vy: 0,
+
+  dir: 'north',
+
+  animFrame: 0,
+
+  animTimer: 0,
+
+  fuel: FUEL_CAPACITY,
+
+  mpg:  FUEL_MPG,
+
+  boostRamp: 0,   // 0=cruise, 1=full boost
+
+  ore:        0,   // Nebulite ore in cargo
+  mineral:    0,   // Craftable mineral material (2% drop from brown asteroids)
+  armalcolite:0,   // Fuel ore from lg_planet — refine with C key
+
+  mineCooldown: 0, // frames until next mine hit
+
+  laserWx: null, laserWy: null, laserTimer: 0, // visual laser
+
+  hp:       100,   // hull integrity
+
+  iframes:  0,     // invincibility frames after collision
+
+  hitFlash: 0,     // red screen flash
+
+};
+
+
+
+const particles = [];
+
+const keys      = {};
+
+let   bgFlash   = null;   // { name, timer } — show map name briefly after switch
+
+
+
+// ─── ASTEROID STATE ─────────────────────────────────────────────────────────
+
+const asteroidImgs = {};
+
+const asteroids    = [];
+
+const orePickups   = [];
+
+const toRespawn    = [];  // { timer } queue for delayed respawns
+
+let   mineTarget   = null;
+
+let   mineDist     = Infinity;
+
+
+
+// ─── TOAST ────────────────────────────────────────────────────────────────
+
+let toastMsg  = '';
+
+let toastTimer = 0;
+
+let craftCooldown = 0;
+
+function showToast(msg) { toastMsg = msg; toastTimer = 150; }
+
+
+
+// ─── DEBUG SYSTEM ────────────────────────────────────────────────────────────
+
+let debugMode    = false;       // F1 toggles debug overlay
+
+let frameCount   = 0;
+
+let fpsCounter   = 0;
+
+let fpsDisplay   = 0;
+
+let fpsTimer     = 0;
+
+let mouseX       = 0;
+
+let mouseY       = 0;
+
+let mouseDX      = 0;
+
+let mouseDY      = 0;
+
+const INPUT_LOG_MAX = 30;       // keep last 30 input events
+
+const inputLog   = [];          // [{t, type, code}]
+
+let   nebTime  = 0;         // autonomous nebula animation clock
+
+
+
+// Per-layer drift + opacity pulse params.
+
+// Each layer drifts independently — different speeds and directions = depth.
+
+// Flat base stays stable; L1/L2/L3 breathe and drift at different rates.
+
+// vx/vy: px per frame autonomous drift
+
+// wave: vertical sine amplitude (px) — makes gas undulate as it travels
+
+// pulseAmp: how much opacity swings (0 = none, 0.3 = swings from 0.7 to 1.0)
+
+// pulseSpd: radians per frame for opacity sine (~0.01 = ~10s cycle at 60fps)
+
+// phase: offset so layers don't all pulse in sync
+
+const NEB_LAYERS = [
+
+  { vx: 0.012, vy:  0.004, wave:  0, pulseAmp: 0.00, pulseSpd: 0.010, phase: 0.0 }, // flat — stable anchor
+
+  { vx: 0.055, vy:  0.018, wave: 14, pulseAmp: 0.00, pulseSpd: 0.009, phase: 2.1 }, // L1 far — drift only, no pulse
+
+  { vx: 0.038, vy: -0.022, wave: 22, pulseAmp: 0.00, pulseSpd: 0.007, phase: 4.2 }, // L2 mid — drift only, no pulse
+
+  { vx: 0.090, vy:  0.030, wave: 10, pulseAmp: 0.00, pulseSpd: 0.013, phase: 1.5 }, // L3 near — drift only, no pulse
+
+];
+
+
+
+// ─── INPUT ────────────────────────────────────────────────────────────────────
+
+window.addEventListener('keydown', e => {
+
+  keys[e.code] = true;
+
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
+
+    e.preventDefault();
+
+  if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
+
+  // Record for debugger
+
+  inputLog.push({ t: Date.now(), type: 'keydown', code: e.code });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+
+
+  // Background cycling
+
+  if (e.code === 'BracketLeft') {
+
+    currentBgIdx = (currentBgIdx - 1 + BG_SETS.length) % BG_SETS.length;
+
+    loadBgSet(BG_SETS[currentBgIdx]);
+
+  }
+
+  if (e.code === 'BracketRight') {
+
+    currentBgIdx = (currentBgIdx + 1) % BG_SETS.length;
+
+    loadBgSet(BG_SETS[currentBgIdx]);
+
+  }
+
+});
+
+window.addEventListener('keyup', e => {
+
+  keys[e.code] = false;
+
+  inputLog.push({ t: Date.now(), type: 'keyup', code: e.code });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+});
+
+
+
+// ─── MOUSE TRACKING ──────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousemove', e => {
+
+  mouseDX = e.clientX - mouseX;
+
+  mouseDY = e.clientY - mouseY;
+
+  mouseX  = e.clientX;
+
+  mouseY  = e.clientY;
+
+  inputLog.push({ t: Date.now(), type: 'mouse', x: mouseX, y: mouseY, dx: mouseDX, dy: mouseDY });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+});
+
+
+
+// ─── RESIZE ───────────────────────────────────────────────────────────────────
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+
+window.addEventListener('resize', resize);
+
+resize();
+
+
+
+// ─── DIRECTION ────────────────────────────────────────────────────────────────
+
+function velToDir(vx, vy) {
+
+  const angle = Math.atan2(vy, vx) * (180 / Math.PI);
+
+  let best = 'north', minDiff = Infinity;
+
+  for (let i = 0; i < DIRS.length; i++) {
+
+    let diff = angle - DIR_ANGLES_DEG[i];
+
+    while (diff >  180) diff -= 360;
+
+    while (diff < -180) diff += 360;
+
+    if (Math.abs(diff) < minDiff) { minDiff = Math.abs(diff); best = DIRS[i]; }
+
+  }
+
+  return best;
+
+}
+
+
+
+// ─── PARTICLES ────────────────────────────────────────────────────────────────
+
+function spawnThrust(cx, cy, dir, speed) {
+
+  const count   = Math.ceil(speed * 0.8);
+
+  const backIdx = (DIRS.indexOf(dir) + 4) % 8;
+
+  const backRad = DIR_ANGLES_DEG[backIdx] * (Math.PI / 180);
+
+  const offset  = DISPLAY_SIZE * 0.36;
+
+  for (let i = 0; i < count; i++) {
+
+    const spread = (Math.random() - 0.5) * 1.0;
+
+    const spd    = 1.2 + Math.random() * 2.2;
+
+    particles.push({
+
+      x:     cx + Math.cos(backRad) * offset + (Math.random()-0.5) * 6,
+
+      y:     cy + Math.sin(backRad) * offset + (Math.random()-0.5) * 6,
+
+      vx:    Math.cos(backRad + spread) * spd,
+
+      vy:    Math.sin(backRad + spread) * spd,
+
+      life:  1.0,
+
+      decay: 0.045 + Math.random() * 0.04,
+
+      size:  1.5 + Math.random() * 2,
+
+    });
+
+  }
+
+}
+
+function tickParticles() {
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+
+    const p = particles[i];
+
+    p.x += p.vx; p.y += p.vy;
+
+    p.vx *= 0.93; p.vy *= 0.93;
+
+    p.life -= p.decay;
+
+    if (p.life <= 0) particles.splice(i, 1);
+
+  }
+
+}
+
+function drawParticles() {
+
+  for (const p of particles) {
+
+    ctx.globalAlpha = p.life * 0.85;
+
+    if (p.color) {
+
+      ctx.fillStyle = p.color;
+
+    } else {
+
+      const r = Math.floor(79  + (200 - 79)  * (1 - p.life));
+
+      const g = Math.floor(195 * p.life * 0.6);
+
+      const b = Math.floor(195 * p.life);
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+
+    }
+
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+
+  }
+
+  ctx.globalAlpha = 1;
+
+}
+
+
+
+
+
+// ─── ASTEROID SYSTEM ─────────────────────────────────────────────────────────
+
+function randAsteroidType() {
+
+  // dark_metal / void_dark / lg_planet are rarer — weighted pool
+
+  const pool = ASTEROID_POOL;
+
+  return ASTEROID_TYPES[pool[Math.floor(Math.random() * pool.length)]];
+
+}
+
+
+
+function spawnAsteroid(nearShip) {
+
+  const type  = randAsteroidType();
+
+  const angle = Math.random() * Math.PI * 2;
+
+  const dist  = 600 + Math.random() * (WORLD_SPREAD - 600);
+
+  const ox    = nearShip ? ship.worldX : 0;
+
+  const oy    = nearShip ? ship.worldY : 0;
+
+  asteroids.push({
+
+    type,
+
+    worldX:     ox + Math.cos(angle) * dist,
+
+    worldY:     oy + Math.sin(angle) * dist,
+
+    hp:         type.hp,
+
+    maxHp:      type.hp,
+
+    flashTimer: 0,
+
+    angle:      Math.random() * Math.PI * 2,
+
+    rotSpeed:   (Math.random() - 0.5) * 0.008,
+
+    driftVx:    (Math.random() - 0.5) * 0.18,
+
+    driftVy:    (Math.random() - 0.5) * 0.18,
+
+  });
+
+}
+
+
+
+function initAsteroids() {
+
+  for (let i = 0; i < AST_COUNT; i++) spawnAsteroid(false);
+
+}
+
+
+
+// Mine-chip particles (small rock debris on each hit)
+
+function spawnMineChips(sx, sy, isDark) {
+
+  const count = 5 + Math.floor(Math.random() * 5);
+
+  for (let i = 0; i < count; i++) {
+
+    const a = Math.random() * Math.PI * 2;
+
+    const s = 1.5 + Math.random() * 3.5;
+
+    particles.push({
+
+      x: sx + (Math.random()-0.5)*8, y: sy + (Math.random()-0.5)*8,
+
+      vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+
+      life: 1.0, decay: 0.055 + Math.random()*0.05,
+
+      size: 1.5 + Math.random()*2,
+
+      color: isDark ? '#7090d0' : '#907050',
+
+    });
+
+  }
+
+}
+
+
+
+// Break-burst particles (asteroid destroyed)
+
+function spawnBreakBurst(sx, sy, isDark) {
+
+  const count = 22 + Math.floor(Math.random() * 12);
+
+  for (let i = 0; i < count; i++) {
+
+    const a = Math.random() * Math.PI * 2;
+
+    const s = 0.8 + Math.random() * 5;
+
+    const gold = Math.random() > 0.5;
+
+    particles.push({
+
+      x: sx + (Math.random()-0.5)*14, y: sy + (Math.random()-0.5)*14,
+
+      vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+
+      life: 1.0, decay: 0.025 + Math.random()*0.035,
+
+      size: 2 + Math.random()*4,
+
+      color: isDark ? (gold ? '#FFD700' : '#80aaff')
+
+                    : (gold ? '#FFD700' : '#b08050'),
+
+    });
+
+  }
+
+}
+
+
+
+// ─── MINING UPDATE ───────────────────────────────────────────────────────────
+
+function updateMining() {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const cx   = canvas.width  / 2;
+
+  const cy   = canvas.height / 2;
+
+
+
+  // Tick flash timers, rotation, drift
+
+  for (const ast of asteroids) {
+
+    if (ast.flashTimer > 0) ast.flashTimer--;
+
+    ast.angle  = (ast.angle  || 0) + (ast.rotSpeed || 0);
+
+    ast.worldX += ast.driftVx || 0;
+
+    ast.worldY += ast.driftVy || 0;
+
+  }
+
+
+
+  // Find closest asteroid in mine range
+
+  mineTarget = null; mineDist = Infinity;
+
+  for (const ast of asteroids) {
+
+    const d = Math.hypot(ast.worldX - camX, ast.worldY - camY);
+
+    if (d < MINE_RANGE && d < mineDist) { mineDist = d; mineTarget = ast; }
+
+  }
+
+
+
+  // E key: mine nearest asteroid
+
+  if (keys['KeyE'] && mineTarget) {
+
+    if (ship.mineCooldown <= 0) {
+
+      const ast      = mineTarget;
+
+      const isDark   = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
+
+      const asx      = cx + (ast.worldX - camX);
+
+      const asy      = cy + (ast.worldY - camY);
+
+
+
+      ast.hp        -= MINE_DAMAGE;
+
+      ast.flashTimer = 8;
+
+      ship.mineCooldown = MINE_INTERVAL;
+
+      ship.laserWx   = ast.worldX;
+
+      ship.laserWy   = ast.worldY;
+
+      ship.laserTimer = 10;
+
+
+
+      spawnMineChips(asx, asy, isDark);
+
+
+
+      if (ast.hp <= 0) {
+
+        const oreAmt = ast.type.oreMin +
+
+          Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
+
+        orePickups.push({
+
+          worldX: ast.worldX, worldY: ast.worldY,
+
+          amount: oreAmt, life: 480,
+          lootType: ast.type.lootType || null,
+          lootChance: ast.type.lootChance || 0,
+        });
+
+        spawnBreakBurst(asx, asy, isDark);
+
+        asteroids.splice(asteroids.indexOf(ast), 1);
+
+        toRespawn.push({ timer: 900 });   // respawn ~15s later
+
+      }
+
+    }
+
+  }
+
+  if (ship.mineCooldown > 0) ship.mineCooldown--;
+
+  if (ship.laserTimer   > 0) ship.laserTimer--;
+
+
+
+  // Respawn queue
+
+  for (let i = toRespawn.length - 1; i >= 0; i--) {
+
+    toRespawn[i].timer--;
+
+    if (toRespawn[i].timer <= 0) { spawnAsteroid(true); toRespawn.splice(i, 1); }
+
+  }
+
+
+
+  // Auto-collect ore pickups when ship flies close
+
+  for (let i = orePickups.length - 1; i >= 0; i--) {
+
+    const ore = orePickups[i];
+
+    ore.life--;
+
+    const d = Math.hypot(ore.worldX - camX, ore.worldY - camY);
+
+    if (d < ORE_COLLECT_R) {
+
+      ship.ore += ore.amount;
+
+      showToast('+' + ore.amount + ' NEBULITE');
+
+      // Loot drop — check parent asteroid's loot
+      if (ore.lootType && Math.random() < ore.lootChance) {
+        if (ore.lootType === 'mineral') {
+          ship.mineral++;
+          showToast('✦ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
+        } else if (ore.lootType === 'armalcolite') {
+          ship.armalcolite++;
+          showToast('◈ ARMALCOLITE extracted — refine for fuel (' + ship.armalcolite + ' held)', '#34d399');
+        }
+      }
+
+      orePickups.splice(i, 1);
+
+    } else if (ore.life <= 0) {
+
+      orePickups.splice(i, 1);
+
+    }
+
+  }
+
+
+
+  // C key: refine ore into fuel
+
+  if (keys['KeyC'] && craftCooldown <= 0) {
+
+    craftCooldown = 30;
+
+    if (ship.armalcolite > 0) {
+      if (multiMode) {
+        sendRefine();
+      } else {
+        // Solo mode refine
+        const gained = FUEL_PER_CRAFT;
+        ship.armalcolite -= 1;
+        ship.fuel = Math.min(FUEL_CAPACITY, ship.fuel + gained);
+        showToast('REFINED ARMALCOLITE \u2192 +' + gained.toFixed(1) + ' FUEL  (' + ship.fuel.toFixed(1) + ')');
+      }
+      craftCooldown = 30;
+    }
+
+  }
+
+  if (craftCooldown > 0) craftCooldown--;
+
+}
+
+
+
+// ─── DRAW ASTEROIDS ──────────────────────────────────────────────────────────
+
+function drawAsteroids(cx, cy) {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  ctx.imageSmoothingEnabled = false;
+
+
+
+  for (const ast of asteroids) {
+
+    const sw  = ast.type.w * AST_SCALE;
+
+    const sh  = ast.type.h * AST_SCALE;
+
+    const sx  = Math.round(cx + (ast.worldX - camX));
+
+    const sy  = Math.round(cy + (ast.worldY - camY));
+
+
+
+    // Frustum cull
+
+    if (sx < -sw-20 || sx > canvas.width+sw+20 || sy < -sh-20 || sy > canvas.height+sh+20) continue;
+
+
+
+    const img = asteroidImgs[ast.type.id];
+
+
+
+    // Mine-range selection glow
+
+    if (mineTarget === ast) {
+
+      ctx.strokeStyle = keys['KeyE'] ? '#4FC3C3cc' : '#4FC3C344';
+
+      ctx.lineWidth   = keys['KeyE'] ? 2 : 1;
+
+      ctx.strokeRect(sx - sw/2 - 3, sy - sh/2 - 3, sw+6, sh+6);
+
+    }
+
+
+
+    // Hit flash white overlay
+
+    if (ast.flashTimer > 0) {
+
+      ctx.globalAlpha = (ast.flashTimer / 8) * 0.65;
+
+      ctx.fillStyle   = '#ffffff';
+
+      ctx.fillRect(sx - sw/2, sy - sh/2, sw, sh);
+
+      ctx.globalAlpha = 1;
+
+    }
+
+
+
+    if (img) {
+
+      const rot = ast.angle || 0;
+
+      ctx.save();
+
+      ctx.translate(sx, sy);
+
+      ctx.rotate(rot);
+
+      ctx.drawImage(img, -sw/2, -sh/2, sw, sh);
+
+      ctx.restore();
+
+    }
+
+
+
+    // HP bar — only when damaged
+
+    if (ast.hp < ast.maxHp) {
+
+      const bw = sw, bh = 3;
+
+      const bx = sx - sw/2, by = sy + sh/2 + 5;
+
+      const pct = ast.hp / ast.maxHp;
+
+      ctx.fillStyle = '#111a24';
+
+      ctx.fillRect(bx, by, bw, bh);
+
+      ctx.fillStyle = pct > 0.5 ? '#4FC3C3' : pct > 0.25 ? '#e6c040' : '#ff4444';
+
+      ctx.fillRect(bx, by, bw * pct, bh);
+
+    }
+
+  }
+
+}
+
+
+
+// ─── DRAW ORE PICKUPS ────────────────────────────────────────────────────────
+
+function drawOrePickups(cx, cy) {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const t    = Date.now() * 0.005;
+
+  ctx.font   = '9px Courier New';
+
+  for (const ore of orePickups) {
+
+    const sx = cx + (ore.worldX - camX);
+
+    const sy = cy + (ore.worldY - camY);
+
+    if (sx < -20 || sx > canvas.width+20 || sy < -20 || sy > canvas.height+20) continue;
+
+    const pulse = 0.5 + 0.5 * Math.sin(t + ore.worldX * 0.001);
+
+    const r     = 3 + pulse * 2.5;
+
+    // Glow ring
+
+    ctx.globalAlpha = 0.25 * pulse;
+
+    ctx.strokeStyle = '#FFD700';
+
+    ctx.lineWidth   = 1;
+
+    ctx.beginPath(); ctx.arc(sx, sy, r + 4, 0, Math.PI * 2); ctx.stroke();
+
+    // Core dot
+
+    ctx.globalAlpha = 0.7 + 0.3 * pulse;
+
+    ctx.fillStyle   = '#FFD700';
+
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+
+    // Label
+
+    ctx.globalAlpha = 0.8;
+
+    ctx.fillStyle   = '#FFD700';
+
+    ctx.fillText(ore.amount + ' ORE', sx + r + 4, sy + 4);
+
+    ctx.globalAlpha = 1;
+
+  }
+
+}
+
+
+
+// ─── DRAW MINING LASER ───────────────────────────────────────────────────────
+
+function drawMiningLaser(cx, cy) {
+
+  if (ship.laserTimer <= 0 || ship.laserWx === null) return;
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const tx   = cx + (ship.laserWx - camX);
+
+  const ty   = cy + (ship.laserWy - camY);
+
+  const a    = ship.laserTimer / 10;
+
+  ctx.globalAlpha = a * 0.8;
+
+  ctx.strokeStyle = '#4FC3C3';
+
+  ctx.lineWidth   = 1.5;
+
+  ctx.setLineDash([4, 4]);
+
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke();
+
+  ctx.setLineDash([]);
+
+  ctx.globalAlpha = 1;
+
+}
+
+
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+
+function drawToast() {
+
+  if (toastTimer <= 0) return;
+
+  const alpha = Math.min(1, toastTimer / 25);
+
+  ctx.globalAlpha = alpha;
+
+  ctx.font        = '11px Courier New';
+
+  ctx.textAlign   = 'center';
+
+  ctx.fillStyle   = '#FFD700';
+
+  ctx.fillText(toastMsg, canvas.width / 2, canvas.height - 55);
+
+  ctx.textAlign   = 'left';
+
+  ctx.globalAlpha = 1;
+
+  toastTimer--;
+
+}
+
+
+
+// ─── BACKGROUND ───────────────────────────────────────────────────────────────
+
+function drawBG(camX, camY) {
+
+  nebTime++;
+
+  const cw = canvas.width, ch = canvas.height;
+
+
+
+  for (let li = 0; li < bgLayers.length; li++) {
+
+    const layer = bgLayers[li];
+
+    const neb   = NEB_LAYERS[Math.min(li, NEB_LAYERS.length - 1)];
+
+    const img   = layer.img;
+
+    if (!img || !img.width) continue;
+
+    const iw = img.width, ih = img.height;
+
+
+
+    // Parallax offset driven by camera position
+
+    let ox = (((-camX * layer.speed) % iw) + iw) % iw;
+
+    let oy = (((-camY * layer.speed) % ih) + ih) % ih;
+
+
+
+    // Autonomous drift — each layer moves at its own speed and direction
+
+    // Vertical component gets a slow sine wave so the gas undulates as it drifts
+
+    const driftX = (nebTime * neb.vx) % iw;
+
+    const driftY = (nebTime * neb.vy) + Math.sin(nebTime * neb.pulseSpd * 0.4 + neb.phase) * neb.wave;
+
+    ox = ((ox + driftX) % iw + iw) % iw;
+
+    oy = ((oy + driftY) % ih + ih) % ih;
+
+
+
+    // Opacity — two overlapping sines with different periods, out of phase.
+
+    // Gives organic breathing: not perfectly rhythmic, more like drifting gas.
+
+    const pulse = neb.pulseAmp * 0.5 * Math.sin(nebTime * neb.pulseSpd + neb.phase)
+
+                + neb.pulseAmp * 0.3 * Math.sin(nebTime * neb.pulseSpd * 1.6 + neb.phase + 1.1);
+
+    const alpha = Math.max(0.38, Math.min(1.0, 1.0 - neb.pulseAmp * 0.4 + pulse));
+
+
+
+    ctx.globalAlpha = alpha;
+
+
+
+    const cols = Math.ceil(cw / iw) + 2;
+
+    const rows = Math.ceil(ch / ih) + 2;
+
+    for (let tx = -1; tx < cols; tx++)
+
+      for (let ty = -1; ty < rows; ty++)
+
+        ctx.drawImage(img, ox + tx * iw, oy + ty * ih, iw, ih);
+
+
+
+    ctx.globalAlpha = 1;
+
+  }
+
+}
+
+
+
+// ─── SHIP ─────────────────────────────────────────────────────────────────────
+
+function drawShip(cx, cy, now, speed) {
+
+  const moving = speed > SPEED_THRESH;
+
+  if (moving && now - ship.animTimer > ANIM_INTERVAL) {
+
+    ship.animFrame = (ship.animFrame + 1) % FRAME_COUNT;
+
+    ship.animTimer = now;
+
+  } else if (!moving) {
+
+    ship.animFrame = 0;
+
+  }
+
+  const frame = moving
+
+    ? (animations[ship.dir] && animations[ship.dir][ship.animFrame])
+
+    : rotations[ship.dir];
+
+  if (frame) {
+
+    ctx.imageSmoothingEnabled = false;
+
+    ctx.drawImage(
+
+      frame,
+
+      Math.round(cx - DISPLAY_SIZE / 2),
+
+      Math.round(cy - DISPLAY_SIZE / 2),
+
+      DISPLAY_SIZE, DISPLAY_SIZE
+
+    );
+
+  }
+
+}
+
+
+
+// ─── HUD ──────────────────────────────────────────────────────────────────────
+
+// Everything drawn on canvas at 9px Courier New — single consistent style.
+
+const HUD_FONT    = '13px Courier New';
+const HUD_FONT_SM = '11px Courier New';
+const HUD_COLOR = '#4FC3C3';
+const HUD_DIM   = '#4FC3C380';
+
+function hLine(label, value, x, y) {
+  ctx.font      = HUD_FONT;
+  ctx.fillStyle = HUD_DIM;
+  ctx.fillText(label, x, y);
+  ctx.fillStyle = HUD_COLOR;
+  ctx.fillText(value, x + 54, y);
+}
+
+function drawHUD(speed) {
+  const LEFT  = 22;
+  const TOP   = 28;
+  const PW    = 245;
+  const LH    = 17;
+
+  const statsTop = TOP + 14;
+  const thrustY  = statsTop + LH * 3 + 12;
+  const hullY    = thrustY + 24;
+  const fuelY    = hullY  + 30;
+  const oreY     = fuelY  + 46;
+  const minY     = oreY   + LH + 4;
+  const armY     = minY   + LH + 2;
+  const pilotY   = armY   + LH + 6;
+  const hintY    = pilotY + LH + 8;
+  const panelH   = hintY  + LH * 2 + 16;
+
+  ctx.fillStyle = '#000000d0';
+  ctx.fillRect(10, 10, PW, panelH);
+  ctx.strokeStyle = '#4FC3C344';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(10, 10, PW, panelH);
+
+  // STATS
+  hLine('SPD', speed.toFixed(2),                                           LEFT, statsTop);
+  hLine('DIR', ship.dir.replace('-', ' ').toUpperCase(),                   LEFT, statsTop + LH);
+  hLine('POS', Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), LEFT, statsTop + LH * 2);
+
+  // THRUST bar
+  const bx = LEFT, by = thrustY, bw = PW - 34, bh = 5;
+  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
+  ctx.fillText('THRUST', bx, by - 5);
+  ctx.fillStyle = '#0d1520';
+  ctx.fillRect(bx-1, by-1, bw+2, bh+2);
+  const grad = ctx.createLinearGradient(bx, 0, bx+bw, 0);
+  grad.addColorStop(0,'#4FC3C3'); grad.addColorStop(0.6,'#D9541E'); grad.addColorStop(1,'#ff2222');
+  ctx.fillStyle = grad;
+  ctx.fillRect(bx, by, (speed / BOOST_MAX) * bw, bh);
+  ctx.strokeStyle = '#4FC3C340'; ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  // HULL bar
+  const hbx = LEFT, hby = hullY, hbw = PW - 34, hbh = 5;
+  const hpPct = ship.hp / SHIP_MAX_HP;
+  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
+  ctx.fillText('HULL', hbx, hby - 4);
+  ctx.fillStyle = hpPct < 0.25 ? '#ff4444' : HUD_COLOR;
+  ctx.fillText(ship.hp + ' / ' + SHIP_MAX_HP, hbx + hbw - 52, hby - 4);
+  ctx.fillStyle = '#0d1520';
+  ctx.fillRect(hbx-1, hby-1, hbw+2, hbh+2);
+  const hGrad = ctx.createLinearGradient(hbx, 0, hbx+hbw, 0);
+  if (hpPct > 0.5)       { hGrad.addColorStop(0,'#22bb55'); hGrad.addColorStop(1,'#44ff88'); }
+  else if (hpPct > 0.25) { hGrad.addColorStop(0,'#aa6600'); hGrad.addColorStop(1,'#ffcc00'); }
+  else                   { hGrad.addColorStop(0,'#880000'); hGrad.addColorStop(1,'#ff2222'); }
+  ctx.fillStyle = hGrad;
+  ctx.fillRect(hbx, hby, hbw * hpPct, hbh);
+  ctx.strokeStyle = '#ffffff18'; ctx.lineWidth = 1;
+  ctx.strokeRect(hbx, hby, hbw, hbh);
+  if (ship.hp <= 0 && Math.floor(Date.now()/400)%2===0) {
+    ctx.fillStyle = '#ff2222'; ctx.font = 'bold 14px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText('\u2715 HULL BREACH \u2014 CRITICAL', canvas.width/2, canvas.height/2 - 20);
+    ctx.textAlign = 'left';
+  }
+
+  // FUEL segments
+  const fx = LEFT, fy = fuelY;
+  const segCount = 10, segW = Math.floor((PW - 36) / 10) - 1, segH = 12, segGap = 2;
+  const fuelPct = ship.fuel / FUEL_CAPACITY;
+  const filledSegs = Math.ceil(fuelPct * segCount);
+  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
+  ctx.fillText('FUEL', fx, fy - 5);
+  for (let i = 0; i < segCount; i++) {
+    const lit = i < filledSegs;
+    let fill = !lit ? '#0d1520'
+      : fuelPct > 0.5  ? '#3db87a'
+      : fuelPct > 0.25 ? '#e6c040'
+      : (fuelPct < 0.1 && Math.floor(Date.now()/300)%2===0) ? '#ff2222' : '#D9541E';
+    ctx.fillStyle = fill;
+    ctx.fillRect(fx + i*(segW+segGap), fy, segW, segH);
+    ctx.strokeStyle = '#4FC3C318'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(fx + i*(segW+segGap), fy, segW, segH);
+  }
+  ctx.fillStyle = fuelPct < 0.25 ? '#D9541E' : HUD_COLOR;
+  ctx.font = HUD_FONT_SM;
+  ctx.fillText(ship.fuel.toFixed(1) + ' GAL  \u00b7  ' + ship.mpg + ' MPG', fx, fy + segH + 14);
+  if (ship.fuel <= 0) {
+    ctx.fillStyle = '#ff4444';
+    ctx.fillText('\u2715 FUEL EMPTY \u2014 COASTING', fx, fy + segH + 27);
+  } else if (fuelPct < 0.2 && Math.floor(Date.now()/500)%2===0) {
+    ctx.fillStyle = '#D9541E';
+    ctx.fillText('\u26a0 LOW FUEL', fx, fy + segH + 27);
+  }
+
+  // CARGO
+  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
+  ctx.fillText('CARGO', LEFT, oreY);
+  ctx.fillStyle = ship.ore > 0 ? '#FFD700' : '#FFD70040';
+  ctx.fillText(ship.ore + ' NEBULITE', LEFT + 56, oreY);
+
+  ctx.font = 'bold 12px monospace';
+  ctx.fillStyle = ship.mineral > 0 ? '#a78bfa' : '#a78bfa40';
+  ctx.fillText('\u2666', LEFT + 14, minY);
+  ctx.font = HUD_FONT_SM;
+  ctx.fillStyle = ship.mineral > 0 ? '#c4b5fd' : '#c4b5fd50';
+  ctx.fillText(ship.mineral + ' MINERAL', LEFT + 30, minY);
+
+  ctx.font = 'bold 12px monospace';
+  ctx.fillStyle = ship.armalcolite > 0 ? '#34d399' : '#34d39940';
+  ctx.fillText('\u25c8', LEFT + 14, armY);
+  ctx.font = HUD_FONT_SM;
+  ctx.fillStyle = ship.armalcolite > 0 ? '#6ee7b7' : '#6ee7b750';
+  ctx.fillText(ship.armalcolite + ' ARMALCOLITE', LEFT + 30, armY);
+
+  // PILOTS ONLINE
+  if (typeof multiMode !== 'undefined' && multiMode) {
+    ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#38bdf8';
+    ctx.fillText('\u25a0', LEFT + 14, pilotY);
+    ctx.font = HUD_FONT_SM; ctx.fillStyle = '#38bdf8';
+    ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 30, pilotY);
+  }
+
+  // ACTION HINTS
+  const canCraft = ship.armalcolite > 0;
+  ctx.font = HUD_FONT_SM;
+  ctx.fillStyle = canCraft ? '#FFD700' : '#3a3010';
+  ctx.fillText('[C] REFINE', LEFT, hintY);
+  ctx.fillStyle = canCraft ? HUD_COLOR : '#2a3040';
+  ctx.fillText(ORE_PER_FUEL + ' ORE \u2192 +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, hintY);
+
+  ctx.fillStyle = mineTarget ? '#4FC3C3' : '#2a3a4a';
+  ctx.fillText('[E] MINE', LEFT, hintY + LH);
+  if (mineTarget) {
+    ctx.fillStyle = '#4FC3C380';
+    ctx.fillText(Math.round(mineDist) + 'px', LEFT + 72, hintY + LH);
+  }
+
+  // MINI COMPASS
+  const cx2 = canvas.width - 52, cy2 = 124, r = 26;
+  ctx.strokeStyle = '#1a2a3a'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI*2); ctx.stroke();
+  const dirIdx = DIRS.indexOf(ship.dir);
+  if (dirIdx >= 0) {
+    const a = DIR_ANGLES_DEG[dirIdx] * (Math.PI / 180);
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx2, cy2);
+    ctx.lineTo(cx2 + Math.cos(a)*(r-4), cy2 + Math.sin(a)*(r-4)); ctx.stroke();
+    ctx.fillStyle = '#4FC3C3';
+    ctx.beginPath(); ctx.arc(cx2+Math.cos(a)*(r-4), cy2+Math.sin(a)*(r-4), 3, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle = '#1a2a3a88';
+  ctx.beginPath(); ctx.arc(cx2, cy2, 3, 0, Math.PI*2); ctx.fill();
+
+  // MAP FLASH
+  if (bgFlash && bgFlash.timer > 0) {
+    const alpha = Math.min(1, bgFlash.timer / 30);
+    ctx.globalAlpha = alpha; ctx.fillStyle = '#4FC3C3';
+    ctx.font = HUD_FONT; ctx.textAlign = 'center';
+    ctx.fillText('MAP: ' + bgFlash.name.replace('_',' ').toUpperCase(), canvas.width/2, canvas.height - 30);
+    ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+    bgFlash.timer--;
+  }
+}
+
+function drawDebug(speed) {
+
+  const PAD   = 14;
+
+  const LH    = 14;       // line height
+
+  const COL   = '#00ff88';
+
+  const DIM   = '#00aa55';
+
+  const WARN  = '#ffaa00';
+
+  const ERR   = '#ff4444';
+
+  const FONT  = '10px Courier New';
+
+  const BFONT = 'bold 10px Courier New';
+
+
+
+  // ── Right panel ───────────────────────────────────────────────────────────
+
+  const pw  = 310;
+
+  const ph  = 560;
+
+  const px  = canvas.width - pw - 10;
+
+  const py  = 10;
+
+
+
+  ctx.fillStyle   = '#000000cc';
+
+  ctx.fillRect(px, py, pw, ph);
+
+  ctx.strokeStyle = '#00ff8844';
+
+  ctx.lineWidth   = 1;
+
+  ctx.strokeRect(px, py, pw, ph);
+
+
+
+  let y = py + PAD;
+
+  const lx = px + PAD;
+
+
+
+  function row(label, val, color) {
+
+    ctx.font      = FONT;
+
+    ctx.fillStyle = DIM;
+
+    ctx.fillText(label.padEnd(18), lx, y);
+
+    ctx.fillStyle = color || COL;
+
+    ctx.fillText(String(val), lx + 140, y);
+
+    y += LH;
+
+  }
+
+  function divider(title) {
+
+    y += 4;
+
+    ctx.font      = BFONT;
+
+    ctx.fillStyle = '#00ff8866';
+
+    ctx.fillRect(lx, y - 9, pw - PAD * 2, 1);
+
+    ctx.fillStyle = COL;
+
+    ctx.fillText(title, lx, y);
+
+    y += LH;
+
+  }
+
+
+
+  // Header
+
+  ctx.font      = BFONT;
+
+  ctx.fillStyle = COL;
+
+  ctx.fillText('DRIFTBOUND DEBUG  [F1]', lx, y);
+
+  y += LH;
+
+  row('FPS',         fpsDisplay, fpsDisplay < 30 ? ERR : COL);
+
+  row('FRAME',       frameCount);
+
+  row('PARTICLES',   particles.length);
+
+
+
+  divider('SHIP STATE');
+
+  row('WORLD X',     Math.floor(ship.worldX));
+
+  row('WORLD Y',     Math.floor(ship.worldY));
+
+  row('VEL X',       ship.vx.toFixed(4));
+
+  row('VEL Y',       ship.vy.toFixed(4));
+
+  row('SPEED',       speed.toFixed(4), speed > NORMAL_MAX ? WARN : COL);
+
+  row('DIR',         ship.dir.toUpperCase());
+
+  row('ANIM FRAME',  ship.animFrame);
+
+
+
+  divider('BOOST / FUEL');
+
+  const shiftActive = keys['ShiftLeft'] || keys['ShiftRight'];
+
+  row('SHIFT HELD',  shiftActive ? 'YES' : 'NO', shiftActive ? WARN : DIM);
+
+  row('BOOST RAMP',  ship.boostRamp.toFixed(2), ship.boostRamp > 0 ? WARN : DIM);
+
+  row('EFF CAP',     (NORMAL_MAX + (BOOST_MAX - NORMAL_MAX) * ship.boostRamp).toFixed(2));
+
+  row('FUEL',        ship.fuel.toFixed(4) + ' / ' + FUEL_CAPACITY);
+
+  row('FUEL %',      (ship.fuel / FUEL_CAPACITY * 100).toFixed(1) + '%',
+
+      ship.fuel / FUEL_CAPACITY < 0.2 ? ERR : COL);
+
+  row('MPG',         ship.mpg);
+
+  row('NORMAL CAP',  NORMAL_MAX);
+
+  row('BOOST CAP',   BOOST_MAX);
+
+
+
+  divider('BACKGROUND');
+
+  row('MAP IDX',     currentBgIdx + ' / ' + (BG_SETS.length - 1));
+
+  row('MAP NAME',    BG_SETS[currentBgIdx]);
+
+  row('LAYERS',      bgLayers.length + ' loaded');
+
+  row('NEB TIME',    nebTime);
+
+
+
+  divider('MOUSE');
+
+  row('SCREEN X',    mouseX);
+
+  row('SCREEN Y',    mouseY);
+
+  row('DELTA X',     mouseDX);
+
+  row('DELTA Y',     mouseDY);
+
+
+
+  divider('KEYS HELD');
+
+  const held = Object.keys(keys).filter(k => keys[k]);
+
+  if (held.length === 0) {
+
+    ctx.font = FONT; ctx.fillStyle = DIM;
+
+    ctx.fillText('(none)', lx, y); y += LH;
+
+  } else {
+
+    held.forEach(k => {
+
+      ctx.font = FONT; ctx.fillStyle = WARN;
+
+      ctx.fillText(k, lx, y); y += LH;
+
+    });
+
+  }
+
+
+
+  divider('LAST 8 INPUTS');
+
+  const recent = inputLog.slice(-8);
+
+  recent.forEach(ev => {
+
+    const age = ((Date.now() - ev.t) / 1000).toFixed(1) + 's ago';
+
+    const label = ev.type === 'mouse'
+
+      ? 'mouse  ' + ev.x + ',' + ev.y
+
+      : ev.type + '  ' + ev.code;
+
+    ctx.font      = FONT;
+
+    ctx.fillStyle = ev.type === 'keydown' ? '#88ffcc' : ev.type === 'mouse' ? '#88aaff' : '#ffaa88';
+
+    ctx.fillText(label.substring(0, 28), lx, y);
+
+    ctx.fillStyle = DIM;
+
+    ctx.fillText(age, lx + 200, y);
+
+    y += LH;
+
+  });
+
+}
+
+
+
+// ─── UPDATE ───────────────────────────────────────────────────────────────────
+
+function update() {
+
+  const braking  = keys['Space'];
+
+  // Smooth boost ramp: 0=cruise, 1=full boost
+
+  const shiftHeld = (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
+
+  if (shiftHeld) {
+
+    ship.boostRamp = Math.min(1, ship.boostRamp + BOOST_RAMP_UP);
+
+  } else {
+
+    ship.boostRamp = Math.max(0, ship.boostRamp - BOOST_RAMP_DOWN);
+
+  }
+
+  const boosting = ship.boostRamp > 0;
+
+
+
+  let ax = 0, ay = 0, thrusting = false;
+
+
+
+  if (!braking) {
+
+    // Thrust lerps smoothly between cruise and boost as ramp moves
+
+    const t = THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp;
+
+    if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
+
+    if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
+
+    if (keys['KeyA'] || keys['ArrowLeft'])  ax -= t;
+
+    if (keys['KeyD'] || keys['ArrowRight']) ax += t;
+
+    if (ax !== 0 && ay !== 0) { ax *= 0.7071; ay *= 0.7071; }
+
+    thrusting = (ax !== 0 || ay !== 0);
+
+  }
+
+
+
+  ship.vx = (ship.vx + ax) * (braking ? BRAKE : FRICTION);
+
+  ship.vy = (ship.vy + ay) * (braking ? BRAKE : FRICTION);
+
+
+
+  const spd = Math.hypot(ship.vx, ship.vy);
+
+
+
+  // Speed cap slides between NORMAL_MAX and BOOST_MAX with the ramp
+
+  const effectiveCap = NORMAL_MAX + (BOOST_MAX - NORMAL_MAX) * ship.boostRamp;
+
+  if (spd > effectiveCap) {
+
+    ship.vx = (ship.vx / spd) * effectiveCap;
+
+    ship.vy = (ship.vy / spd) * effectiveCap;
+
+  }
+
+
+
+  if (spd < 0.01) { ship.vx = 0; ship.vy = 0; }
+
+  // ─── COLLISION DETECTION ───────────────────────────────────────────────────────────
+
+  if (ship.iframes > 0) {
+
+    ship.iframes--;
+
+  } else {
+
+    for (const ast of asteroids) {
+
+      const dx   = ast.worldX - ship.worldX;
+
+      const dy   = ast.worldY - ship.worldY;
+
+      const astR = Math.max(ast.type.w, ast.type.h) * AST_SCALE * 0.38;
+
+      const minD = COLLISION_RADIUS + astR;
+
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < minD && dist > 0.001) {
+
+        const nx = dx / dist, ny = dy / dist;
+
+        const dot = ship.vx * nx + ship.vy * ny;
+
+        ship.vx -= (1 + COLLISION_BOUNCE) * dot * nx;
+
+        ship.vy -= (1 + COLLISION_BOUNCE) * dot * ny;
+
+        ship.worldX -= nx * (minD - dist) * 0.6;
+
+        ship.worldY -= ny * (minD - dist) * 0.6;
+
+        ship.hp      = Math.max(0, ship.hp - COLLISION_DAMAGE);
+
+        ship.iframes = COLLISION_IFRAMES;
+
+        ship.hitFlash = 18;
+
+        showToast('HULL DAMAGE  │  ' + ship.hp + ' / ' + SHIP_MAX_HP);
+
+        break;
+
+      }
+
+    }
+
+  }
+
+  if (ship.hitFlash > 0) ship.hitFlash--;
+
+
+
+
+
+  ship.worldX += ship.vx;
+
+  ship.worldY += ship.vy;
+
+
+
+  if (spd > SPEED_THRESH) ship.dir = velToDir(ship.vx, ship.vy);
+
+
+
+  // Fuel burns when Shift is physically held + thrusting (not just during ramp-down).
+
+  // Power curve: speed^1.4 -- low speed barely sips, high speed drinks hard.
+
+  if (shiftHeld && thrusting) {
+
+    const cur = Math.hypot(ship.vx, ship.vy);
+
+    const burnRate = Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
+
+    ship.fuel = Math.max(0, ship.fuel - burnRate);
+
+  }
+
+
+
+  _thrusting = thrusting;
+  _boosting  = shiftHeld;
+  if (typeof multiMode !== "undefined" && multiMode) sendMove();
+  return Math.hypot(ship.vx, ship.vy);
+
+}
+
+
+
+// ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+
+function loop(now) {
+
+  const speed = update();
+
+  updateMining();
+
+  const cx    = canvas.width  / 2;
+
+  const cy    = canvas.height / 2;
+
+
+
+  // FPS counter
+
+  frameCount++;
+
+  fpsCounter++;
+
+  if (now - fpsTimer >= 1000) {
+
+    fpsDisplay = fpsCounter;
+
+    fpsCounter = 0;
+
+    fpsTimer   = now;
+
+  }
+
+
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+
+
+  drawBG(ship.worldX, ship.worldY);
+
+  drawAsteroids(cx, cy);
+
+  drawMiningLaser(cx, cy);
+
+  drawOrePickups(cx, cy);
+  drawRemotePlayers(cx, cy);
+
+
+
+  if (speed > SPEED_THRESH) spawnThrust(cx, cy, ship.dir, speed);
+
+  tickParticles();
+
+  drawParticles();
+
+  // Hit flash
+
+  if (ship.hitFlash > 0) {
+
+    ctx.globalAlpha = (ship.hitFlash / 18) * 0.30;
+
+    ctx.fillStyle = '#ff1010';
+
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.globalAlpha = 1;
+
+  }
+
+  drawShip(cx, cy, now, speed);
+  drawHUD(speed);
+
+  drawToast();
+
+
+
+  if (debugMode) drawDebug(speed);
+
+  requestAnimationFrame(loop);
+
+}
+
+
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+
+async function boot() {
+
+  await loadAll();
+
+  initAsteroids();
+
+  document.getElementById('loading').style.display = 'none';
+
+  if (debugMode) drawDebug(speed);
+
+  requestAnimationFrame(loop);
+
+}
+
+
+
+// Press ESC in lobby to play solo
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const lobby = document.getElementById('lobby');
+    if (lobby && lobby.style.display !== 'none') {
+      lobby.style.display = 'none';
+      showToast('Solo mode — no server connected', '#64748b');
+    }
+  }
+});
+
+boot();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRIFTBOUND MULTIPLAYER CLIENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+let socket        = null;
+let myPid         = null;
+let myColor       = '#00ff88';
+let remotePlayers = {};
+let serverAsteroids = {};
+let serverOres    = {};
+let multiMode     = false;
+let serverTick    = 0;
+
+function lobbyConnect() {
+  const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
+  const ip   = (document.getElementById('lobby-ip').value  || 'localhost').trim();
+  const isLocal = ip==='localhost'||ip.startsWith('192.')||ip.startsWith('10.');
+  const url = isLocal ? 'ws://'+ip+':8080/ws' : 'wss://'+ip+'/ws';
+  setLobbyStatus('Connecting to ' + url + '...');
+  try { socket = new WebSocket(url); } catch(e) { setLobbyStatus('Invalid address.'); return; }
+  socket.onopen    = () => socket.send(JSON.stringify({ type: 'join', name }));
+  socket.onmessage = (ev) => handleServerMsg(JSON.parse(ev.data));
+  socket.onerror   = () => { setLobbyStatus('Could not connect — is the server running?'); socket = null; };
+  socket.onclose   = () => { if (multiMode) showToast('Disconnected from server', '#ef4444'); multiMode = false; socket = null; };
+}
+
+function setLobbyStatus(msg) {
+  document.getElementById('lobby-status').textContent = msg;
+}
+
+function handleServerMsg(msg) {
+  switch (msg.type) {
+    case 'init':
+      myPid   = msg.pid;
+      myColor = msg.color;
+      multiMode = true;
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = a;
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      document.getElementById('lobby').style.display = 'none';
+      showToast('Connected as ' + msg.name, myColor);
+      break;
+
+    case 'state':
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = a;
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      break;
+
+    case 'player_joined':
+      if (msg.player.pid !== myPid) { remotePlayers[msg.player.pid] = msg.player; showToast('⚡ ' + msg.player.name + ' entered the drift', '#38bdf8'); }
+      break;
+
+    case 'player_left':
+      delete remotePlayers[msg.pid];
+      showToast('❖ ' + msg.name + ' disconnected', '#64748b');
+      break;
+
+    case 'asteroid_hit':
+      if (serverAsteroids[msg.aid]) serverAsteroids[msg.aid].hp = msg.hp;
+      break;
+
+    case 'asteroid_destroyed':
+      delete serverAsteroids[msg.aid];
+      serverOres[msg.oid] = msg.ore;
+      serverAsteroids[msg.new_ast.aid] = msg.new_ast;
+      break;
+
+    case 'ore_collected':
+      delete serverOres[msg.oid];
+      ship.ore = msg.totals.ore; ship.mineral = msg.totals.mineral; ship.armalcolite = msg.totals.armalcolite;
+      if (msg.loot === 'mineral')      showToast('❖ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
+      else if (msg.loot === 'armalcolite') showToast('◈ ARMALCOLITE extracted (' + ship.armalcolite + ' held)', '#34d399');
+      break;
+
+    case 'ore_gone':
+      delete serverOres[msg.oid];
+      break;
+
+    case 'refined':
+      ship.fuel = msg.fuel; ship.armalcolite = msg.armalcolite;
+      showToast('REFINED ARMALCOLITE → +2.0 FUEL  (' + ship.fuel.toFixed(1) + ')', '#34d399');
+      break;
+  }
+}
+
+let _lastSend = 0;
+let _thrusting = false;
+let _boosting  = false;
+
+function sendMove() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const now = performance.now();
+  if (now - _lastSend < 50) return;
+  _lastSend = now;
+  socket.send(JSON.stringify({
+    type: 'move', worldX: ship.worldX, worldY: ship.worldY,
+    vx: ship.vx, vy: ship.vy, dir: ship.dir,
+    speed: Math.hypot(ship.vx, ship.vy), animFrame: ship.animFrame,
+    hp: ship.hp, fuel: ship.fuel, ore: ship.ore,
+    mineral: ship.mineral, armalcolite: ship.armalcolite,
+    thrusting: _thrusting, boosting: _boosting,
+  }));
+}
+
+function sendMine(aid, damage) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'mine', aid, damage }));
+}
+
+function sendCollectOre(oid) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'collect_ore', oid }));
+}
+
+function sendRefine() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'refine' }));
+}
+
+function drawRemotePlayers(cx, cy) {
+  if (!multiMode) return;
+  for (const p of Object.values(remotePlayers)) {
+    const sx = cx + (p.worldX - ship.worldX);
+    const sy = cy + (p.worldY - ship.worldY);
+    const margin = 120;
+    if (sx < -margin || sx > canvas.width + margin || sy < -margin || sy > canvas.height + margin) {
+      drawPlayerIndicator(p, cx, cy, sx, sy);
+      continue;
+    }
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.shadowColor = p.color; ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(0, -18); ctx.lineTo(11, 8); ctx.lineTo(0, 4); ctx.lineTo(-11, 8);
+    ctx.closePath();
+    ctx.fillStyle = p.color + 'cc'; ctx.fill();
+    ctx.strokeStyle = p.color; ctx.lineWidth = 1.5; ctx.stroke();
+    if (p.boosting || p.thrusting) {
+      ctx.beginPath(); ctx.moveTo(-5,6); ctx.lineTo(0, 14+Math.random()*4); ctx.lineTo(5,6);
+      ctx.fillStyle = p.color + '88'; ctx.fill();
+    }
+    ctx.shadowBlur = 0; ctx.restore();
+    ctx.save();
+    ctx.font = '10px monospace'; ctx.fillStyle = p.color; ctx.textAlign = 'center';
+    ctx.fillText(p.name, sx, sy - 26);
+    const barW = 36, hpPct = Math.max(0, p.hp / 100);
+    ctx.fillStyle = '#0d1520';
+    ctx.fillRect(sx - barW/2 - 1, sy - 22, barW + 2, 4);
+    ctx.fillStyle = hpPct > 0.5 ? '#22c55e' : hpPct > 0.25 ? '#f59e0b' : '#ef4444';
+    ctx.fillRect(sx - barW/2, sy - 21, barW * hpPct, 2);
+    ctx.restore();
+  }
+}
+
+function drawPlayerIndicator(p, cx, cy, sx, sy) {
+  const angle = Math.atan2(sy - cy, sx - cx);
+  const r     = Math.min(canvas.width, canvas.height) / 2 - 40;
+  const edgeX = cx + Math.cos(angle) * r;
+  const edgeY = cy + Math.sin(angle) * r;
+  const dist  = Math.round(Math.hypot(sx - cx, sy - cy) / 10) / 10;
+  ctx.save();
+  ctx.translate(edgeX, edgeY); ctx.rotate(angle + Math.PI / 2);
+  ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(6,4); ctx.lineTo(-6,4); ctx.closePath();
+  ctx.fillStyle = p.color + 'cc'; ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.font = '9px monospace'; ctx.fillStyle = p.color + 'aa'; ctx.textAlign = 'center';
+  ctx.fillText(p.name + ' ' + dist + 'km', edgeX, edgeY + 20);
+  ctx.restore();
+}
+
+</script>
+
+
+<!-- ─── MULTIPLAYER LOBBY ──────────────────────────────────────────────── -->
+<div id="lobby" style="
+  position:fixed; inset:0; background:#020810ee;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  z-index:999; font-family:monospace; color:#e2e8f0;
+">
+  <div style="font-size:11px;letter-spacing:4px;color:#64748b;margin-bottom:8px;">DRIFTBOUND</div>
+  <div style="font-size:28px;font-weight:bold;letter-spacing:2px;color:#7c3aed;margin-bottom:4px;">MULTIPLAYER</div>
+  <div style="font-size:11px;letter-spacing:3px;color:#475569;margin-bottom:40px;">ALPHA</div>
+
+  <div style="width:320px;">
+    <div style="font-size:10px;letter-spacing:2px;color:#64748b;margin-bottom:8px;">PILOT NAME</div>
+    <input id="lobby-name" maxlength="16" placeholder="Enter your name..."
+      style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;
+             color:#e2e8f0;padding:12px 16px;font-size:14px;font-family:monospace;
+             outline:none;letter-spacing:1px;margin-bottom:16px;"
+      onkeydown="if(event.key==='Enter')lobbyConnect()"
+    />
+    <div style="font-size:10px;letter-spacing:2px;color:#64748b;margin-bottom:8px;">SERVER IP</div>
+    <input id="lobby-ip" placeholder="localhost  (or friend's IP)"
+      style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;
+             color:#e2e8f0;padding:12px 16px;font-size:14px;font-family:monospace;
+             outline:none;letter-spacing:1px;margin-bottom:24px;"
+      onkeydown="if(event.key==='Enter')lobbyConnect()"
+    />
+    <button onclick="lobbyConnect()"
+      style="width:100%;padding:14px;background:#7c3aed;border:none;color:#fff;
+             font-size:13px;font-family:monospace;letter-spacing:3px;cursor:pointer;">
+      LAUNCH ▶
+    </button>
+    <div id="lobby-status" style="margin-top:16px;font-size:11px;color:#64748b;text-align:center;min-height:20px;"></div>
+  </div>
+</div>
+
+</body>
+
+</html>
+

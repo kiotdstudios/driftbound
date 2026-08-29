@@ -1,0 +1,146 @@
+{
+  "group_id": "788959a8-4c21-4f4c-9892-f7a95d5d6d58",
+  "objects": [
+    {
+      "id": "1e7812c2-e5d7-4bbe-8f46-2ae00c677fe4",
+      "name": "base",
+      "prompt": "Create a small modular spacecraft viewed directly from above. This is the player's starting ship and should have a compact central cockpit/core with a reinforced glass cockpit window toward the north/front.\n\nExterior style: rugged industrial survival craft, dark gunmetal gray armor, steel panels, exposed mechanical details, vents, bolts, panel seams, orange warning lights, and subtle cyan/blue illuminated technology. Slightly worn and weathered, but still operational.\n\nIMPORTANT: Include 4 clearly defined modular docking connectors facing North, South, East, and West. All four connectors should use the same standardized size and design so future rectangular spacecraft pods can attach seamlessly. The north side should still communicate that it is the cockpit/front while maintaining a docking point.\n\nKeep the ship compact and mostly symmetrical for tile-based gameplay. Strong readable silhouette. No large wings. No oversized engines blocking docking ports. Small maneuvering thrusters can sit near the corners.\n\nStyle: modern high-detail pixel art, crisp deliberate pixels, detailed 32/64-bit-inspired aesthetic, dark industrial sci-fi RPG, subtle weathering.\n\nExact top-down orthographic perspective. No isometric angle, no side view, no perspective tilt.\n\nTransparent background. Single centered ship sprite. Consistent pixel grid. Clean edges. No text or UI.\n\nThe design should clearly feel like a tiny starting ship that will grow as discovered pods are attached to its four sides.",
+      "size": {
+        "width": 68,
+        "height": 68
+      },
+      "directions": 8,
+      "view": "high top-down",
+      "rotations": {
+        "south": "rotations/south.png",
+        "south-east": "rotations/south-east.png",
+        "east": "rotations/east.png",
+        "north-east": "rotations/north-east.png",
+        "north": "rotations/north.png",
+        "north-west": "rotations/north-west.png",
+        "west": "rotations/west.png",
+        "south-west": "rotations/south-west.png"
+      },
+      "animations": {
+        "8-frame_spaceship_flying_animation._Keep_the_ship": {
+          "directions": {
+            "north": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "east": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/east/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "west": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/west/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "south-east": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-east/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "south-west": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south-west/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "south": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/south/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "north-west": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-west/frame_008.png"
+              ],
+              "frame_count": 9
+            },
+            "north-east": {
+              "frames": [
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_000.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_001.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_002.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_003.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_004.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_005.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_006.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_007.png",
+                "animations/8-frame_spaceship_flying_animation._Keep_the_ship/north-east/frame_008.png"
+              ],
+              "frame_count": 9
+            }
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "1.1",
+  "export_date": "2026-08-29T13:43:53.858495"
+}

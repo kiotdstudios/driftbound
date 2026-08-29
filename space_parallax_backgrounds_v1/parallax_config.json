@@ -1,0 +1,148 @@
+{
+  "backgrounds": [
+    {
+      "name": "stellar_field_04",
+      "flat": "stellar_04_FLAT.png",
+      "layers": [
+        {"file": "stellar_04_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "stellar_04_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "stellar_04_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "stellar_field_05",
+      "flat": "stellar_05_FLAT.png",
+      "layers": [
+        {"file": "stellar_05_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "stellar_05_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "stellar_05_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "toxic_02",
+      "flat": "toxic_02_FLAT.png",
+      "layers": [
+        {"file": "toxic_02_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "toxic_02_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "toxic_02_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "toxic_03",
+      "flat": "toxic_03_FLAT.png",
+      "layers": [
+        {"file": "toxic_03_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "toxic_03_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "toxic_03_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "toxic_04",
+      "flat": "toxic_04_FLAT.png",
+      "layers": [
+        {"file": "toxic_04_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "toxic_04_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "toxic_04_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "toxic_05",
+      "flat": "toxic_05_FLAT.png",
+      "layers": [
+        {"file": "toxic_05_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "toxic_05_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "toxic_05_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "vapor_01",
+      "flat": "vapor_01_FLAT.png",
+      "layers": [
+        {"file": "vapor_01_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "vapor_01_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "vapor_01_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "vapor_02",
+      "flat": "vapor_02_FLAT.png",
+      "layers": [
+        {"file": "vapor_02_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "vapor_02_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "vapor_02_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "vapor_03",
+      "flat": "vapor_03_FLAT.png",
+      "layers": [
+        {"file": "vapor_03_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "vapor_03_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "vapor_03_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "vapor_04",
+      "flat": "vapor_04_FLAT.png",
+      "layers": [
+        {"file": "vapor_04_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "vapor_04_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "vapor_04_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "vapor_05",
+      "flat": "vapor_05_FLAT.png",
+      "layers": [
+        {"file": "vapor_05_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "vapor_05_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "vapor_05_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "void_01",
+      "flat": "void_01_FLAT.png",
+      "layers": [
+        {"file": "void_01_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "void_01_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "void_01_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "void_02",
+      "flat": "void_02_FLAT.png",
+      "layers": [
+        {"file": "void_02_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "void_02_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "void_02_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "void_03",
+      "flat": "void_03_FLAT.png",
+      "layers": [
+        {"file": "void_03_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "void_03_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "void_03_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "void_04",
+      "flat": "void_04_FLAT.png",
+      "layers": [
+        {"file": "void_04_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "void_04_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "void_04_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    },
+    {
+      "name": "void_05",
+      "flat": "void_05_FLAT.png",
+      "layers": [
+        {"file": "void_05_L1_far.png", "speed": 0.2, "depth": 1, "alpha": 0.4},
+        {"file": "void_05_L2_mid.png", "speed": 0.5, "depth": 2, "alpha": 0.4},
+        {"file": "void_05_L3_near.png", "speed": 1.0, "depth": 3, "alpha": 0.4}
+      ]
+    }
+  ]
+}

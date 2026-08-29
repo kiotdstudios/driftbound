@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parallax Layer Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #header {
+            background: #16213e;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+
+        h1 {
+            font-size: 18px;
+            color: #4cc9f0;
+            margin-right: auto;
+        }
+
+        #controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 12px;
+            color: #aaa;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        select, input[type="range"] {
+            background: #0f3460;
+            border: 1px solid #4cc9f0;
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            box-shadow: 0 0 5px rgba(76, 201, 240, 0.5);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 150px;
+            height: 8px;
+            padding: 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #4cc9f0;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .value-display {
+            min-width: 40px;
+            text-align: center;
+            font-weight: bold;
+            color: #4cc9f0;
+        }
+
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: #000;
+        }
+
+        #layer-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(22, 33, 62, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #4cc9f0;
+            max-width: 250px;
+        }
+
+        #layer-controls h3 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #4cc9f0;
+            border-bottom: 1px solid #4cc9f0;
+            padding-bottom: 5px;
+        }
+
+        .layer-alpha-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-left: 24px;
+            margin-bottom: 8px;
+        }
+
+        .layer-alpha-control label {
+            font-size: 10px;
+            color: #aaa;
+            min-width: 40px;
+        }
+
+        .layer-alpha-control input[type="range"] {
+            width: 80px;
+            height: 4px;
+        }
+
+        .layer-alpha-control .alpha-value {
+            font-size: 10px;
+            color: #4cc9f0;
+            min-width: 30px;
+            text-align: right;
+        }
+
+        .layer-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        .layer-toggle input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .layer-toggle label {
+            font-size: 12px;
+            cursor: pointer;
+            color: #ddd;
+            text-transform: none;
+        }
+
+        .layer-info {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(76, 201, 240, 0.3);
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        .layer-info p {
+            margin-bottom: 4px;
+        }
+
+        .layer-info strong {
+            color: #4cc9f0;
+        }
+
+        #no-image {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #888;
+        }
+
+        #no-image h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(22, 33, 62, 0.9);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 11px;
+            color: #aaa;
+            border: 1px solid rgba(76, 201, 240, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>Parallax Layer Tester</h1>
+        <div class="control-group">
+            <label for="background-select">Background:</label>
+            <select id="background-select"></select>
+        </div>
+        <div class="control-group">
+            <label for="intensity-slider">Intensity:</label>
+            <input type="range" id="intensity-slider" min="0" max="2" step="0.1" value="1">
+            <span class="value-display" id="intensity-value">1.0</span>
+        </div>
+        <div class="control-group">
+            <label for="auto-scroll">Auto Scroll:</label>
+            <input type="checkbox" id="auto-scroll">
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="parallax-canvas"></canvas>
+        <div id="layer-controls">
+            <h3>Layers</h3>
+            <div id="layer-toggles"></div>
+            <div class="layer-info" id="layer-info"></div>
+        </div>
+        <div id="instructions">
+            Move mouse to create parallax effect. Layers move at different speeds based on depth.
+        </div>
+        <div id="no-image" style="display: none;">
+            <h2>No Images Found</h2>
+            <p>Please ensure the assets folder is properly configured.</p>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        let config = null; // Will be loaded from parallax_config.json
+        const assetBasePath = 'assets/';
+
+        // State
+        let selectedBackground = null;
+        let intensity = 1.0;
+        let autoScroll = false;
+        let mouseX = 0;
+        let mouseY = 0;
+        let autoScrollOffset = 0;
+        let loadedImages = {};
+        let layerVisibility = {};
+        let layerAlpha = {};
+        let parallaxOffset = { x: 0, y: 0 };
+
+        // DOM Elements
+        const canvas = document.getElementById('parallax-canvas');
+        const ctx = canvas.getContext('2d');
+        const bgSelect = document.getElementById('background-select');
+        const intensitySlider = document.getElementById('intensity-slider');
+        const intensityValue = document.getElementById('intensity-value');
+        const autoScrollCheckbox = document.getElementById('auto-scroll');
+        const layerToggles = document.getElementById('layer-toggles');
+        const layerInfo = document.getElementById('layer-info');
+        const noImageDiv = document.getElementById('no-image');
+
+        // Resize canvas to fill container
+        function resizeCanvas() {
+            const container = document.getElementById('canvas-container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        // Load configuration
+        async function loadConfig() {
+            try {
+                const response = await fetch('parallax_config.json');
+                config = await response.json();
+                populateBackgroundSelect();
+                if (config.backgrounds.length > 0) {
+                    selectBackground(config.backgrounds[0].name);
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+                noImageDiv.style.display = 'block';
+            }
+        }
+
+        // Populate dropdown with background names
+        function populateBackgroundSelect() {
+            bgSelect.innerHTML = '';
+            config.backgrounds.forEach(bg => {
+                const option = document.createElement('option');
+                option.value = bg.name;
+                option.textContent = bg.name;
+                bgSelect.appendChild(option);
+            });
+
+            bgSelect.addEventListener('change', () => {
+                selectBackground(bgSelect.value);
+            });
+        }
+
+        // Select a background and load its images
+        function selectBackground(bgName) {
+            selectedBackground = config.backgrounds.find(bg => bg.name === bgName);
+            if (!selectedBackground) return;
+
+            // Initialize layer visibility and alpha
+            layerVisibility = {};
+            layerAlpha = {};
+            selectedBackground.layers.forEach((layer, index) => {
+                layerVisibility[index] = true;
+                layerAlpha[index] = layer.alpha !== undefined ? layer.alpha : 1.0;
+            });
+
+            loadImages();
+            createLayerToggles();
+        }
+
+        // Load all images for selected background
+        async function loadImages() {
+            loadedImages = {};
+            const paths = [];
+
+            // Add flat image
+            paths.push({
+                key: 'flat',
+                path: assetBasePath + 'flat/' + selectedBackground.flat
+            });
+
+            // Add layers
+            selectedBackground.layers.forEach((layer, index) => {
+                paths.push({
+                    key: 'layer' + index,
+                    path: assetBasePath + 'layers/' + layer.file
+                });
+            });
+
+            // Load all images
+            for (const item of paths) {
+                try {
+                    const img = new Image();
+                    img.src = item.path;
+                    await new Promise((resolve, reject) => {
+                        img.onload = resolve;
+                        img.onerror = reject;
+                    });
+                    loadedImages[item.key] = img;
+                } catch (error) {
+                    console.error(`Failed to load ${item.path}:`, error);
+                }
+            }
+
+            console.log(`Loaded ${Object.keys(loadedImages).length} images`);
+        }
+
+        // Create checkboxes for layer toggles
+        function createLayerToggles() {
+            layerToggles.innerHTML = '';
+
+            selectedBackground.layers.forEach((layer, index) => {
+                const div = document.createElement('div');
+                div.className = 'layer-toggle';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = 'layer-' + index;
+                checkbox.checked = layerVisibility[index];
+                checkbox.addEventListener('change', (e) => {
+                    layerVisibility[index] = e.target.checked;
+                    updateLayerInfo();
+                });
+
+                const label = document.createElement('label');
+                label.htmlFor = 'layer-' + index;
+                label.textContent = `Layer ${layer.depth} (${layer.speed}x)`;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                layerToggles.appendChild(div);
+
+                // Add alpha slider for this layer
+                const alphaDiv = document.createElement('div');
+                alphaDiv.className = 'layer-alpha-control';
+
+                const alphaLabel = document.createElement('label');
+                alphaLabel.textContent = 'Alpha:';
+
+                const alphaSlider = document.createElement('input');
+                alphaSlider.type = 'range';
+                alphaSlider.min = '0';
+                alphaSlider.max = '1';
+                alphaSlider.step = '0.05';
+                alphaSlider.value = layerAlpha[index];
+                alphaSlider.addEventListener('input', (e) => {
+                    layerAlpha[index] = parseFloat(e.target.value);
+                    alphaValueSpan.textContent = layerAlpha[index].toFixed(2);
+                    updateLayerInfo();
+                });
+
+                const alphaValueSpan = document.createElement('span');
+                alphaValueSpan.className = 'alpha-value';
+                alphaValueSpan.textContent = layerAlpha[index].toFixed(2);
+
+                alphaDiv.appendChild(alphaLabel);
+                alphaDiv.appendChild(alphaSlider);
+                alphaDiv.appendChild(alphaValueSpan);
+                layerToggles.appendChild(alphaDiv);
+            });
+
+            updateLayerInfo();
+        }
+
+        // Update layer info display
+        function updateLayerInfo() {
+            if (!selectedBackground) return;
+
+            let html = `<p><strong>Background:</strong> ${selectedBackground.name}</p>`;
+            selectedBackground.layers.forEach((layer, index) => {
+                const status = layerVisibility[index] ? 'Visible' : 'Hidden';
+                const color = layerVisibility[index] ? '#4cc9f0' : '#888';
+                html += `<p style="color:${color}"><strong>Layer ${layer.depth}:</strong> ${layer.file}<br>` +
+                       `<small>Speed: ${layer.speed}, Alpha: ${layerAlpha[index].toFixed(2)}, Status: ${status}</small></p>`;
+            });
+
+            layerInfo.innerHTML = html;
+        }
+
+        // Draw function
+        function draw() {
+            if (!selectedBackground || !loadedImages.flat) {
+                requestAnimationFrame(draw);
+                return;
+            }
+
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const bg = selectedBackground;
+
+            // Calculate parallax offset based on mouse position
+            let targetOffsetX = 0;
+            let targetOffsetY = 0;
+
+            if (autoScroll) {
+                autoScrollOffset += 0.5;
+                const maxOffset = 200;
+                targetOffsetX = Math.sin(autoScrollOffset * 0.01) * maxOffset;
+                targetOffsetY = Math.cos(autoScrollOffset * 0.015) * maxOffset * 0.5;
+            } else {
+                // Mouse-driven: offset based on how far mouse is from center
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                targetOffsetX = (mouseX - centerX) * 0.5;
+                targetOffsetY = (mouseY - centerY) * 0.5;
+            }
+
+            // Smooth interpolation
+            parallaxOffset.x += (targetOffsetX - parallaxOffset.x) * 0.1;
+            parallaxOffset.y += (targetOffsetY - parallaxOffset.y) * 0.1;
+
+            // Draw flat background (static, no parallax, no tiling needed)
+            if (loadedImages.flat) {
+                drawImageFit(loadedImages.flat);
+            }
+
+            // Draw layers with parallax based on speed
+            bg.layers.forEach((layer, index) => {
+                if (!layerVisibility[index]) return;
+
+                const img = loadedImages['layer' + index];
+                if (!img) return;
+
+                const speed = layer.speed * intensity;
+                const offsetX = parallaxOffset.x * speed;
+                const offsetY = parallaxOffset.y * speed;
+
+                // Apply alpha for this layer
+                ctx.globalAlpha = layerAlpha[index];
+                drawImageTile(img, offsetX, offsetY);
+                ctx.globalAlpha = 1.0;
+            });
+
+            requestAnimationFrame(draw);
+        }
+
+        // Draw flat background image: scale-to-cover once, no tiling needed
+        function drawImageFit(img) {
+            const imgRatio = img.width / img.height;
+            const canvasRatio = canvas.width / canvas.height;
+            let drawWidth, drawHeight;
+            if (canvasRatio > imgRatio) {
+                drawWidth = canvas.width;
+                drawHeight = Math.round(canvas.width / imgRatio);
+            } else {
+                drawWidth = Math.round(canvas.height * imgRatio);
+                drawHeight = canvas.height;
+            }
+            const drawX = Math.floor((canvas.width  - drawWidth)  / 2);
+            const drawY = Math.floor((canvas.height - drawHeight) / 2);
+            ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        }
+
+        // Draw a seamless-tiling layer image with a parallax offset.
+        // Tile dimensions are snapped to whole pixels to prevent sub-pixel seam gaps.
+        function drawImageTile(img, offsetX, offsetY) {
+            const imgRatio = img.width / img.height;
+            const canvasRatio = canvas.width / canvas.height;
+
+            let drawWidth, drawHeight;
+            if (canvasRatio > imgRatio) {
+                drawWidth = canvas.width;
+                drawHeight = Math.round(canvas.width / imgRatio);
+            } else {
+                drawWidth = Math.round(canvas.height * imgRatio);
+                drawHeight = canvas.height;
+            }
+
+            // Center + offset, then normalise to (-tileSize, 0] so the grid
+            // always starts just off the top-left edge — no gaps, no jumps.
+            let startX = (offsetX + (canvas.width  - drawWidth)  / 2) % drawWidth;
+            let startY = (offsetY + (canvas.height - drawHeight) / 2) % drawHeight;
+            if (startX > 0) startX -= drawWidth;
+            if (startY > 0) startY -= drawHeight;
+
+            // Integer pixel positions eliminate sub-pixel seam gaps
+            startX = Math.floor(startX);
+            startY = Math.floor(startY);
+
+            for (let y = startY; y < canvas.height; y += drawHeight) {
+                for (let x = startX; x < canvas.width; x += drawWidth) {
+                    ctx.drawImage(img, x, y, drawWidth, drawHeight);
+                }
+            }
+        }
+
+        // Event Listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        intensitySlider.addEventListener('input', (e) => {
+            intensity = parseFloat(e.target.value);
+            intensityValue.textContent = intensity.toFixed(1);
+        });
+
+        autoScrollCheckbox.addEventListener('change', (e) => {
+            autoScroll = e.target.checked;
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // Initialize
+        resizeCanvas();
+        loadConfig();
+        draw();
+    </script>
+</body>
+</html>
