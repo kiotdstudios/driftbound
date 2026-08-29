@@ -132,6 +132,10 @@
 
 <script>
 
+
+// ── HOISTED: toast state vars must be declared before any onclick fires ──
+let toastMsg   = '';
+let toastTimer = 0;
 document.querySelectorAll('canvas').forEach((c, i) => { if (i > 0) c.remove(); });
 
 const canvas = document.getElementById('game');
@@ -604,17 +608,11 @@ const orePickups   = [];
 
 const toRespawn    = [];  // { timer } queue for delayed respawns
 
-let   mineTarget   = null; _ePressed = false;
+let   mineTarget   = null;
 
 let   mineDist     = Infinity;
 
 
-
-// ─── TOAST ────────────────────────────────────────────────────────────────
-
-let toastMsg  = '';
-
-let toastTimer = 0;
 
 let craftCooldown = 0;
 
