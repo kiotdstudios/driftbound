@@ -2245,6 +2245,10 @@ function handleServerMsg(msg) {
       if (msg.player.pid !== myPid) { remotePlayers[msg.player.pid] = msg.player; showToast('⚡ ' + msg.player.name + ' entered the drift', '#38bdf8'); }
       break;
 
+    case 'player_move':
+      if (msg.pid !== myPid) remotePlayers[msg.pid] = msg.player;
+      break;
+
     case 'player_left':
       delete remotePlayers[msg.pid];
       showToast('❖ ' + msg.name + ' disconnected', '#64748b');
