@@ -181,12 +181,13 @@ const COLLISION_BOUNCE = 0.45;
 const COLLISION_DAMAGE = 8;
 
 const COLLISION_IFRAMES= 60;
-const PVP_COLLISION_R  = COLLISION_RADIUS * 2;  // ship-to-ship hit radius
-const PVP_DAMAGE       = 6;   // hull damage per ship collision
-const PVP_IFRAMES      = 90;  // longer iframes after pvp hit
-const PVP_BOUNCE       = 0.6; // harder bounce than asteroid
+// PVP constants moved below COLLISION_RADIUS
 
 const COLLISION_RADIUS = 28;
+const PVP_COLLISION_R  = COLLISION_RADIUS * 2;  // ship-to-ship hit radius
+const PVP_DAMAGE       = 6;    // hull damage per ship collision
+const PVP_IFRAMES      = 90;   // invincibility frames after pvp hit
+const PVP_BOUNCE       = 0.6;  // harder bounce than asteroid
 
 
 
@@ -2298,7 +2299,7 @@ boot();
 // DRIFTBOUND MULTIPLAYER CLIENT
 // ═══════════════════════════════════════════════════════════════════════════
 
-let socket        = null;
+var socket        = null;  // var avoids TDZ with lobbyConnect
 let myPid         = null;
 let myColor       = '#00ff88';
 let remotePlayers = {};
