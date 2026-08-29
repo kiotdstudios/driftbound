@@ -511,56 +511,36 @@ function _initBG() {
 }
 
 async function loadAll() {
-  const jobs = [];
+  // Boot is instant — all external assets load in background after game starts.
+  // Renderers check for null and draw vector fallbacks if images aren't ready yet.
 
-  // Helper: load with timeout — never hangs the boot if an asset 404s
-  function loadImgSafe(src, ms=4000) {
+  function bgLoad(src, onDone) {
     totalAssets++;
-    return new Promise(resolve => {
-      const img = new Image();
-      const tid = setTimeout(() => { loadedAssets++; refreshBar(); resolve(null); }, ms);
-      img.onload  = () => { clearTimeout(tid); loadedAssets++; refreshBar(); resolve(img); };
-      img.onerror = () => { clearTimeout(tid); loadedAssets++; refreshBar(); resolve(null); };
-      img.src = src;
-    });
+    const img = new Image();
+    img.onload  = () => { loadedAssets++; refreshBar(); if (onDone) onDone(img); };
+    img.onerror = () => { loadedAssets++; refreshBar(); };
+    img.src = src;
   }
 
-  // Pod ship sprites (external PNGs — timeout-safe)
+  // Pod ship sprites — background load, no await
   for (const dir of DIRS) {
-    jobs.push(loadImgSafe(`${POD_BASE}rotations/${dir}.png`).then(img => { rotations[dir] = img; }));
-  }
-  for (const dir of DIRS) {
-    animations[dir] = new Array(FRAME_COUNT).fill(null);
+    bgLoad(`${POD_BASE}rotations/${dir}.png`,        img => { rotations[dir] = img; });
+    bgLoad(`${POD_SPRITE_BASE}rotations/${dir}.png`, img => { podRotations[dir] = img; });
     for (let f = 0; f < FRAME_COUNT; f++) {
       const ff = f, pad = String(f).padStart(3, '0');
-      jobs.push(
-        loadImgSafe(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`)
-          .then(img => { animations[dir][ff] = img; })
-      );
-    }
-  }
-  for (const dir of DIRS) {
-    jobs.push(loadImgSafe(`${POD_SPRITE_BASE}rotations/${dir}.png`).then(img => { podRotations[dir] = img; }));
-  }
-  for (const dir of DIRS) {
-    podAnimations[dir] = new Array(FRAME_COUNT).fill(null);
-    for (let f = 0; f < FRAME_COUNT; f++) {
-      const ff = f, pad = String(f).padStart(3, '0');
-      jobs.push(
-        loadImgSafe(`${POD_SPRITE_BASE}animations/${POD_ANIM_KEY}/${dir}/frame_${pad}.png`)
-          .then(img => { podAnimations[dir][ff] = img; })
-      );
+      bgLoad(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`,
+             img => { animations[dir][ff] = img; });
+      bgLoad(`${POD_SPRITE_BASE}animations/${POD_ANIM_KEY}/${dir}/frame_${pad}.png`,
+             img => { podAnimations[dir][ff] = img; });
     }
   }
 
-
-  // Asteroid sprites (timeout-safe)
+  // Asteroid sprites — background load
   for (const t of ASTEROID_TYPES) {
-    jobs.push(loadImgSafe('Demo_assets/asteroids/' + t.id + '.png')
-      .then(img => { asteroidImgs[t.id] = img; }));
+    bgLoad('Demo_assets/asteroids/' + t.id + '.png', img => { asteroidImgs[t.id] = img; });
   }
 
-  await Promise.all(jobs);
+  // Return immediately — game starts now, sprites swap in as they arrive
 }
 
 
@@ -1767,6 +1747,25 @@ function drawBG(camX, camY) {
 // ─── SHIP ─────────────────────────────────────────────────────────────────────
 
 function drawShip(cx, cy, now, speed) {
+  // ── Vector fallback if sprites not loaded yet ──
+  const _shipImg = rotations[ship.dir] || null;
+  if (!_shipImg) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(DIR_ANGLES_DEG[DIRS.indexOf(ship.dir)] * Math.PI / 180);
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(0, -18); ctx.lineTo(12, 14); ctx.lineTo(0, 8);
+    ctx.lineTo(-12, 14); ctx.closePath(); ctx.stroke();
+    // engine glow
+    if (thrusting || boosting) {
+      ctx.strokeStyle = boosting ? '#ff6b35' : '#00ff88';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(0, 22); ctx.lineTo(7, 10); ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
 
   const moving = speed > SPEED_THRESH;
 
