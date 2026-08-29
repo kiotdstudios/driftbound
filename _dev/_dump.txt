@@ -1,0 +1,75 @@
+--- [0] ---
+Style = '#38bdf8';
+    ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 30, pilotY);
+  }
+
+  // ACTION HINTS
+  const canCraft = ship.armalcolite > 0;
+  ctx.font = H
+
+--- [1] ---
+     = null;
+let myColor       = '#00ff88';
+let remotePlayers = {};
+let serverAsteroids = {};
+let serverOres    = {};
+let multiMode     = false;
+let serverTick    = 0;
+
+function lobbyConnect()
+
+--- [2] ---
+onst o of msg.ores) serverOres[o.oid] = o;
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      document.getElementById('lobby').sty
+
+--- [3] ---
+r (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      document.getElementById('lobby').style.display = 'none';
+      showToast('Connected as ' + msg.name, myColor);
+  
+
+--- [4] ---
+Color);
+      break;
+
+    case 'state':
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      serverAsteroids = {};
+      for (co
+
+--- [5] ---
+r (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = a;
+      serverOres = {};
+  
+
+--- [6] ---
+r_joined':
+      if (msg.player.pid !== myPid) { remotePlayers[msg.player.pid] = msg.player; showToast('⚡ ' + msg.player.name + ' entered the drift', '#38bdf8'); }
+      break;
+
+    case 'player_l
+
+--- [7] ---
+  break;
+
+    case 'player_left':
+      delete remotePlayers[msg.pid];
+      showToast('❖ ' + msg.name + ' disconnected', '#64748b');
+      break;
+
+    case 'asteroid_hit':
+      if (serverAst
+
+--- [8] ---
+ltiMode) return;
+  for (const p of Object.values(remotePlayers)) {
+    const sx = cx + (p.worldX - ship.worldX);
+    const sy = cy + (p.worldY - ship.worldY);
+    const margin = 120;
+    if (sx <
+

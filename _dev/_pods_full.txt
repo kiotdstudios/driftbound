@@ -1,0 +1,41 @@
+function drawAttachedPods(cx, cy) {
+  if (attachedPods.length) {
+    const t = Date.now() * 0.001;
+    const DIR_OFFSETS = {
+      north:{ox:0,oy:38},northeast:{ox:-27,oy:27},east:{ox:-38,oy:0},
+      southeast:{ox:-27,oy:-27},south:{ox:0,oy:-38},southwest:{ox:27,oy:-27},
+      west:{ox:38,oy:0},northwest:{ox:27,oy:27},
+    };
+    const off = DIR_OFFSETS[ship.dir] || {ox:0,oy:38};
+    attachedPods.forEach((pod, idx) => {
+      const dist  = 42 + idx * 36;
+      const ratio = dist / 38;
+      const px = cx + off.ox * ratio;
+      const py = cy + off.oy * ratio;
+      ctx.save();
+      ctx.strokeStyle = "#38bdf866"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.translate(px, py + Math.sin(t*1.8+idx*1.2)*2);
+      ctx.shadowColor = pod.color || "#38bdf8"; ctx.shadowBlur = 10;
+      const podFrame = podRotations["south"];
+      if (podFrame) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(podFrame, -22, -22, 44, 44);
+      } else {
+        ctx.fillStyle = (pod.color||"#38bdf8")+"cc";
+        ctx.beginPath();
+        for(let k=0;k<6;k++){const a=(k/6)*Math.PI*2-Math.PI/6;
+          k===0?ctx.moveTo(Math.cos(a)*14,Math.sin(a)*14):ctx.lineTo(Math.cos(a)*14,Math.sin(a)*14);}
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.shadowBlur=0; ctx.restore();
+    });
+  }
+  if (_autoSaveTimer > 1780) {
+    ctx.save(); ctx.textAlign="right"; ctx.font="11px Courier New";
+    ctx.fillStyle="#22c55e"; ctx.fillText("SAVING...", canvas.width-14, 16);
+    ctx.restore();
+  }
+}

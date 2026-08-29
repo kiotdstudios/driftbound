@@ -1,0 +1,103 @@
+function drawHUD(speed) {
+  const L=18, PW=310, LINE=22;
+  const SML="13px Courier New", MED="15px Courier New";
+  const DIM="#4a6070", TEAL="#4FC3C3", ORANGE="#D9541E", WHT="#c8d8e8";
+
+  function sBar(y, lbl, col) {
+    col = col||TEAL;
+    ctx.fillStyle=col+"28"; ctx.fillRect(10,y-14,PW,18);
+    ctx.fillStyle=col;      ctx.fillRect(10,y-14,3,18);
+    ctx.font="bold 11px Courier New"; ctx.fillStyle=col;
+    ctx.fillText(lbl, L+6, y);
+  }
+  function kv(key,val,x,y,vc) {
+    ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText(key,x,y);
+    ctx.font=MED; ctx.fillStyle=vc||WHT; ctx.fillText(val,x+68,y);
+  }
+  function hbar(x,y,w,h,pct,c1,c2) {
+    ctx.fillStyle="#0d1520"; ctx.fillRect(x-1,y-1,w+2,h+2);
+    const g=ctx.createLinearGradient(x,0,x+w,0);
+    g.addColorStop(0,c1); g.addColorStop(1,c2||c1);
+    ctx.fillStyle=g; ctx.fillRect(x,y,w*Math.min(pct,1),h);
+    ctx.strokeStyle="#ffffff14"; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+  }
+
+  const resCount=(ship.ore>0?1:0)+(ship.mineral>0?1:0)+(ship.armalcolite>0?1:0);
+  const modRows =attachedPods.length;
+  const netRow  =(typeof multiMode!=="undefined"&&multiMode)?1:0;
+  const panelH  =312+resCount*LINE+(modRows?(LINE*(modRows+1)):0)+(netRow?LINE*2:0);
+
+  ctx.fillStyle="#000000e0"; ctx.fillRect(10,10,PW,panelH);
+  ctx.strokeStyle=TEAL+"30"; ctx.lineWidth=1; ctx.strokeRect(10,10,PW,panelH);
+  ctx.fillStyle=TEAL+"50";   ctx.fillRect(10,10,3,panelH);
+
+  let y=30;
+
+  // NAVIGATION
+  sBar(y,"NAVIGATION",TEAL); y+=LINE+2;
+  kv("SPD",speed.toFixed(2),L,y); y+=LINE;
+  kv("DIR",ship.dir.replace("-"," ").toUpperCase(),L,y); y+=LINE;
+  kv("POS",Math.floor(ship.worldX)+" / "+Math.floor(ship.worldY),L,y); y+=LINE+4;
+
+  // SHIP
+  sBar(y,"SHIP  "+ship.shipType.name,TEAL); y+=LINE+2;
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("THRUST",L,y); y+=4;
+  hbar(L,y,PW-28,7,speed/BOOST_MAX,"#4FC3C3","#ff2222"); y+=16;
+  const hpPct=ship.hp/SHIP_MAX_HP;
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("HULL",L,y);
+  ctx.font=SML; ctx.fillStyle=hpPct<0.25?"#ff4444":WHT;
+  ctx.fillText(ship.hp+" / "+SHIP_MAX_HP,L+68,y); y+=4;
+  hbar(L,y,PW-28,7,hpPct,
+    hpPct>0.5?"#22bb55":hpPct>0.25?"#aa6600":"#880000",
+    hpPct>0.5?"#44ff88":hpPct>0.25?"#ffcc00":"#ff2222"); y+=16;
+  const fuelPct=ship.fuel/FUEL_CAPACITY;
+  const segW=Math.floor((PW-28)/10)-2, filledSegs=Math.ceil(fuelPct*10);
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("FUEL",L,y);
+  ctx.font=SML; ctx.fillStyle=fuelPct<0.25?ORANGE:WHT;
+  ctx.fillText(ship.fuel.toFixed(1)+" gal",L+68,y); y+=4;
+  for(let i=0;i<10;i++){
+    const lit=i<filledSegs;
+    ctx.fillStyle=!lit?"#0d1520":fuelPct>0.5?"#3db87a":fuelPct>0.25?"#e6c040":
+      (fuelPct<0.1&&Math.floor(Date.now()/300)%2===0)?"#ff2222":ORANGE;
+    ctx.fillRect(L+i*(segW+2),y,segW,10);
+    ctx.strokeStyle="#4FC3C318"; ctx.lineWidth=0.5;
+    ctx.strokeRect(L+i*(segW+2),y,segW,10);
+  }
+  y+=16;
+  if(ship.fuel<=0){ctx.font=SML;ctx.fillStyle="#ff4444";ctx.fillText("✕ FUEL EMPTY",L,y);y+=LINE;}
+  else if(fuelPct<0.2&&Math.floor(Date.now()/500)%2===0){ctx.font=SML;ctx.fillStyle=ORANGE;ctx.fillText("⚠ LOW FUEL",L,y);y+=LINE;}
+
+  // Hull death overlay
+  if(ship.hp<=0){
+    if(!ship.destroyed){ship.destroyed=true;ship.destroyedAt=Date.now();
+      for(let i=0;i<60;i++){const ang=Math.random()*Math.PI*2,spd=1+Math.random()*5;
+        particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+          life:80+Math.random()*60,maxLife:140,
+          color:["#ff4444","#ff8800","#ffcc00","#ffffff"][Math.floor(Math.random()*4)],size:2+Math.random()*4});}}
+    const elapsed=Date.now()-(ship.destroyedAt||Date.now()),remaining=Math.ceil((4000-elapsed)/1000);
+    ctx.fillStyle="#000000bb";ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign="center";
+    ctx.font="bold 32px Courier New";ctx.fillStyle="#ff2222";ctx.fillText("✕  SHIP DESTROYED",canvas.width/2,canvas.height/2-30);
+    ctx.font="20px Courier New";ctx.fillStyle="#ff8800";
+    ctx.fillText("RESPAWNING IN "+Math.max(0,remaining)+"...",canvas.width/2,canvas.height/2+14);
+    ctx.textAlign="left";
+    if(elapsed>=4000){
+      if(ship.ore>0||ship.mineral>0||ship.armalcolite>0){
+        worldPods.push({pid:"wreck_"+Date.now(),type:"_wreck",
+          worldX:ship.worldX+(Math.random()-0.5)*40,worldY:ship.worldY+(Math.random()-0.5)*40,
+          angle:Math.random()*Math.PI*2,
+          cargo:{ore:ship.ore,mineral:ship.mineral,armalcolite:ship.armalcolite},label:"WRECK"});}
+      ship.ore=0;ship.mineral=0;ship.armalcolite=0;
+      ship.hp=SHIP_MAX_HP;ship.worldX=(Math.random()-0.5)*300;ship.worldY=(Math.random()-0.5)*300;
+      ship.vx=0;ship.vy=0;ship.destroyed=false;saveGame();
+      showToast("RESPAWNED — cargo lost. Find your wreck.","#f97316");
+    }
+    return;
+  }
+
+  // CARGO
+  sBar(y,"CARGO","#f59e0b"); y+=LINE+2;
+  const cUsed=cargoUsed(),cMax=ship.shipType.cargoLimit||CARGO_LIMIT;
+  const cPct=Math.min(cUsed/cMax,1),cFull=cUsed>=cMax;
+  hbar(L,y,PW-60,6,cPct,
+    cPct<0.7?"#4FC3C3":cPct<0.95

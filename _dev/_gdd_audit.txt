@@ -1,0 +1,24 @@
+=== BUILT (19) ===
+  [x] 8-dir movement
+  [x] Acceleration/physics
+  [x] Boost/dash
+  [x] Character sprite
+  [x] Exterior zone
+  [x] 3+ resource types
+  [x] Mining
+  [x] Craft station
+  [x] Recipes
+  [x] Ranged weapon
+  [x] Enemy types
+  [x] Pod discovery
+  [x] Pod docking
+  [x] Fuel/oxygen system
+  [x] Hull/HP system
+  [x] Save/load
+  [x] Multiplayer (non-MVP)
+  [x] Combat system
+  [x] Narrative thread
+
+=== MISSING (2) ===
+  [ ] Walk into pod
+  [ ] Walkable pod interior

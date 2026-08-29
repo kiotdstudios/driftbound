@@ -1,0 +1,5 @@
+C:\Users\diepowel\Documents\DRIFTBOUND\Driftbound_Game_Design_Document_v1.docx  (1937796 bytes)
+C:\Users\diepowel\Documents\DRIFTBOUND\_find_gdd.py  (440 bytes)
+C:\Users\diepowel\Documents\DRIFTBOUND\Demo_assets\asteroids\lg_planet.png  (3661 bytes)
+C:\Users\diepowel\Documents\DRIFTBOUND\Demo_assets\planets\planet_ice.png  (3155 bytes)
+C:\Users\diepowel\Documents\DRIFTBOUND\Demo_assets\planets\planet_mars.png  (1787 bytes)

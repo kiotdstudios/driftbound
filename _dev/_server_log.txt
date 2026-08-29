@@ -1,0 +1,6 @@
+[DRIFTBOUND] Server starting...
+[DRIFTBOUND] WS    → ws://localhost:8766
+[DRIFTBOUND] 30 asteroids spawned
+[DRIFTBOUND] Share your IP with your friend to play together
+─────────────────────────────────────────────────
+[DRIFTBOUND] HTTP  → http://localhost:8765/driftbound_flight_test.html

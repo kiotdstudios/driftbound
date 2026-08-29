@@ -1,0 +1,8 @@
+filelen=77262
+drawHUD=42230
+FUEL=2159
+fuel=2020
+boostFactor=-1
+boosting=54624
+shiftKey=-1
+isBoosting=-1

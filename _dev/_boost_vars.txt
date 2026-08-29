@@ -1,0 +1,13 @@
+L115:   SHIFT &mdash; BOOST (burns fuel)<br>
+L157: const BOOST_MAX    = 5.28;  // shift-hold cap — burns fuel, fast
+L159: const BOOST_THRUST = 0.294; // -30% accel  // higher thrust while Shift held — punchy acceleration
+L2092:   divider('BOOST / FUEL');
+L2094:   const shiftActive = keys['ShiftLeft'] || keys['ShiftRight'];
+L2204:   const shiftHeld = (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
+L2216:   const boosting = ship.boostRamp > 0;
+L2226:     // Thrust lerps smoothly between cruise and boost as ramp moves
+L2228:     const t = THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp;
+L2386:   _boosting  = shiftHeld;
+L2766: let _boosting  = false;
+L2780:     thrusting: _thrusting, boosting: _boosting,
+L2812:     const pMoving = (p.thrusting || p.boosting);

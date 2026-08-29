@@ -1,0 +1,160 @@
+{
+  "project": "DRIFTBOUND",
+  "file": "driftbound_flight_test.html",
+  "version": "0.4",
+  "last_updated": "2026-08-29T10:19:47.749192",
+  "serve_command": "python -m http.server 8420",
+  "url": "http://localhost:8420/driftbound_flight_test.html",
+  "folder": "C:\\Users\\diepowel\\Documents\\DRIFTBOUND",
+  "controls": {
+    "WASD / ArrowKeys": "Thrust in 8 directions (normal drift speed)",
+    "ShiftLeft/Right": "Boost \u2014 raises speed cap to BOOST_MAX, burns fuel",
+    "Space": "Brake \u2014 applies strong friction multiplier",
+    "BracketLeft": "Cycle background map backward",
+    "BracketRight": "Cycle background map forward",
+    "F1": "Toggle debug overlay"
+  },
+  "constants": {
+    "NORMAL_MAX": 0.65,
+    "BOOST_MAX": 5.28,
+    "BOOST_DRAG": 0.968,
+    "THRUST": 0.18,
+    "FRICTION": 0.984,
+    "BRAKE": 0.88,
+    "SPEED_THRESH": 0.12,
+    "FUEL_CAPACITY": 10.0,
+    "FUEL_MPG": 27,
+    "PIXELS_PER_MILE": 300,
+    "SPRITE_SIZE": 68,
+    "DISPLAY_SCALE": 2,
+    "FRAME_COUNT": 9,
+    "ANIM_FPS": 12
+  },
+  "fuel_burn_formula": "speed^1.4 / (PIXELS_PER_MILE * mpg) per frame \u2014 only when boosting+thrusting",
+  "ship_sprite_structure": {
+    "base_path": "pod_sprites/Create_a_small_modular_spacecr/",
+    "rotation_sprites": "rotations/{dir}.png \u2014 8 directions: north, north-east, east, south-east, south, south-west, west, north-west",
+    "animation_sprites": "animations/8-frame_spaceship_flying_animation._Keep_the_ship/{dir}/frame_000-008.png",
+    "sprite_size_px": "68x68",
+    "display_size_px": "136x136 (2x scale)"
+  },
+  "backgrounds": {
+    "sets": [
+      "stellar_01-05",
+      "vapor_01-05",
+      "toxic_01-05",
+      "void_01-05"
+    ],
+    "default": "stellar_02",
+    "layer_structure": {
+      "flat": "flat/{name}_FLAT.png \u2014 parallax speed 0.05",
+      "L1_far": "layers/{name}_L1_far.png \u2014 parallax speed 0.20",
+      "L2_mid": "layers/{name}_L2_mid.png \u2014 parallax speed 0.50",
+      "L3_near": "layers/{name}_L3_near.png \u2014 parallax speed 1.00"
+    },
+    "image_size_px": "1456x816 (approx)"
+  },
+  "nebula_layer_config": {
+    "note": "pulseAmp MUST stay 0.00 \u2014 opacity animation causes visible tile seam artifacts",
+    "L1_far": {
+      "vx": 0.055,
+      "vy": 0.018,
+      "wave": 14,
+      "pulseAmp": 0.0
+    },
+    "L2_mid": {
+      "vx": 0.038,
+      "vy": -0.022,
+      "wave": 22,
+      "pulseAmp": 0.0
+    },
+    "L3_near": {
+      "vx": 0.09,
+      "vy": 0.03,
+      "wave": 10,
+      "pulseAmp": 0.0
+    }
+  },
+  "hud_layout": {
+    "left_panel": {
+      "position": "top-left, canvas-drawn",
+      "background_rect": "x=12, y=12, w=195, h=165",
+      "rows": [
+        "SPD",
+        "DIR",
+        "POS",
+        "THRUST bar",
+        "FUEL gauge",
+        "GAL\u00b7MPG",
+        "warnings"
+      ],
+      "font": "9px Courier New (HUD_FONT constant)",
+      "primary_color": "#4FC3C3",
+      "dim_color": "#4FC3C380"
+    },
+    "compass": {
+      "position": "top-right canvas",
+      "cx2": "canvas.width - 48",
+      "cy2": 112,
+      "radius": 22
+    },
+    "controls_hint": {
+      "element": "#controls div",
+      "position": "top: 24px; right: 24px",
+      "font": "10px, color #2a3a4a"
+    }
+  },
+  "debug_overlay": {
+    "toggle": "F1",
+    "position": "right side canvas panel",
+    "shows": [
+      "FPS",
+      "frame count",
+      "particle count",
+      "ship worldX/Y",
+      "vx/vy",
+      "speed",
+      "direction",
+      "animFrame",
+      "boosting flag",
+      "fuel level",
+      "fuel %",
+      "mpg",
+      "speed caps",
+      "current bg map name + index",
+      "nebTime",
+      "mouse X/Y",
+      "mouse delta",
+      "keys currently held",
+      "last 8 input events (keydown/keyup/mousemove) with age in seconds"
+    ]
+  },
+  "game_loop": {
+    "entry": "boot() -> loadAll() -> requestAnimationFrame(loop)",
+    "loop_order": [
+      "update()",
+      "clearRect",
+      "drawBG",
+      "spawnThrust",
+      "tickParticles",
+      "drawParticles",
+      "drawShip",
+      "drawHUD",
+      "drawDebug (if F1)"
+    ],
+    "nebTime_increments": "inside drawBG() every frame"
+  },
+  "known_issues": [
+    "Tile seams faintly visible on fast scroll \u2014 keep pulseAmp=0 to minimize",
+    "No collision detection yet",
+    "No game objects (asteroids, fuel pickups, etc.) yet",
+    "DOM hud div still exists in HTML but is hidden/empty \u2014 can be cleaned"
+  ],
+  "next_features_discussed": [
+    "Asteroids / debris field",
+    "Fuel pickup / refueling",
+    "Pod module docking (N/S/E/W ports)",
+    "NPC or enemy ships",
+    "Collision detection"
+  ]
+}
