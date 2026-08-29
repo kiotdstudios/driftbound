@@ -114,6 +114,11 @@ async def ws_handler(request):
                     p=players[pid]
                     await broadcast({'type':'ore_collected','oid':oid,'pid':pid,'loot':loot,
                                      'totals':{'ore':p['ore'],'mineral':p['mineral'],'armalcolite':p['armalcolite']}})
+            elif t == 'player_hit' and pid in players:
+                target_pid=data.get('target')
+                dmg=int(data.get('damage', 6))
+                if target_pid in players:
+                    await broadcast({'type':'player_hit','pid':target_pid,'damage':dmg,'by':pid})
             elif t == 'refine' and pid in players:
                 p=players[pid]
                 if p.get('armalcolite',0)>0:

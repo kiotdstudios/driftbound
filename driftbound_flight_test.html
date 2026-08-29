@@ -181,6 +181,10 @@ const COLLISION_BOUNCE = 0.45;
 const COLLISION_DAMAGE = 8;
 
 const COLLISION_IFRAMES= 60;
+const PVP_COLLISION_R  = COLLISION_RADIUS * 2;  // ship-to-ship hit radius
+const PVP_DAMAGE       = 6;   // hull damage per ship collision
+const PVP_IFRAMES      = 90;  // longer iframes after pvp hit
+const PVP_BOUNCE       = 0.6; // harder bounce than asteroid
 
 const COLLISION_RADIUS = 28;
 
@@ -535,7 +539,8 @@ const ship = {
 
   hp:       100,   // hull integrity
 
-  iframes:  0,     // invincibility frames after collision
+  iframes:  0,     // invinc
+  pvpIframes: 0,   // invincibility after pvp collisionibility frames after collision
 
   hitFlash: 0,     // red screen flash
 
@@ -2106,6 +2111,36 @@ function update() {
 
   if (ship.hitFlash > 0) ship.hitFlash--;
 
+  // ─── PVP COLLISION ──────────────────────────────────────────────────────────
+  if (multiMode && ship.pvpIframes <= 0) {
+    for (const [rpid, rp] of Object.entries(remotePlayers)) {
+      const dx   = rp.worldX - ship.worldX;
+      const dy   = rp.worldY - ship.worldY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < PVP_COLLISION_R && dist > 0.001) {
+        const nx = dx / dist, ny = dy / dist;
+        const dot = ship.vx * nx + ship.vy * ny;
+        // Bounce local ship away
+        ship.vx -= (1 + PVP_BOUNCE) * dot * nx;
+        ship.vy -= (1 + PVP_BOUNCE) * dot * ny;
+        ship.worldX -= nx * (PVP_COLLISION_R - dist) * 0.5;
+        ship.worldY -= ny * (PVP_COLLISION_R - dist) * 0.5;
+        // Take damage locally
+        ship.hp         = Math.max(0, ship.hp - PVP_DAMAGE);
+        ship.pvpIframes = PVP_IFRAMES;
+        ship.hitFlash   = 22;
+        showToast('COLLISION — ' + rp.name + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
+        // Tell server — so rp's client also takes damage
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'player_hit', target: rpid, damage: PVP_DAMAGE }));
+        }
+        break;
+      }
+    }
+  }
+  if (ship.pvpIframes > 0) ship.pvpIframes--;
+
+
 
 
 
@@ -2395,6 +2430,17 @@ function handleServerMsg(msg) {
       ship.fuel = msg.fuel; ship.armalcolite = msg.armalcolite;
       showToast('REFINED ARMALCOLITE → +2.0 FUEL  (' + ship.fuel.toFixed(1) + ')', '#34d399');
       break;
+
+    case 'player_hit':
+      if (msg.pid === myPid) {
+        ship.hp         = Math.max(0, ship.hp - (msg.damage || PVP_DAMAGE));
+        ship.pvpIframes = PVP_IFRAMES;
+        ship.hitFlash   = 22;
+        const attacker  = remotePlayers[msg.by];
+        const aName     = attacker ? attacker.name : 'enemy';
+        showToast('HIT BY ' + aName + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
+      }
+      break;
   }
 }
 
@@ -2411,7 +2457,7 @@ function sendMove() {
     type: 'move', worldX: ship.worldX, worldY: ship.worldY,
     vx: ship.vx, vy: ship.vy, dir: ship.dir,
     speed: Math.hypot(ship.vx, ship.vy), animFrame: ship.animFrame,
-    hp: ship.hp, fuel: ship.fuel, ore: ship.ore,
+    hp: ship.hp, fuel: ship.fuel, ore: ship.ore, pvpIframes: ship.pvpIframes,
     mineral: ship.mineral, armalcolite: ship.armalcolite,
     thrusting: _thrusting, boosting: _boosting,
   }));
