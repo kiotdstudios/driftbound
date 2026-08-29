@@ -2480,6 +2480,7 @@ function saveGame() {
     attachedPods: attachedPods.map(p => p.pid),
     worldPodsLeft: worldPods.map(p => p.pid),
     savedAt:      Date.now(),
+    username:     localStorage.getItem('driftbound_username') || null,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -2600,6 +2601,7 @@ let serverTick    = 0;
 
 function lobbyConnect() {
   const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
+  if (name && name !== 'Pilot') localStorage.setItem('driftbound_username', name);
   const rawInput = (document.getElementById('lobby-ip').value || '').trim();
   // Strip any protocol, trailing slashes, and port remnants from autofill
   const ipInput = rawInput
@@ -2910,6 +2912,13 @@ function drawPlayerIndicator(p, cx, cy, sx, sy) {
 <script>
 // Pre-fill lobby IP with current hostname so it's always correct
 document.addEventListener('DOMContentLoaded', () => {
+  // Autofill saved username
+  const savedName = localStorage.getItem('driftbound_username');
+  if (savedName) {
+    const nameField = document.getElementById('lobby-name');
+    if (nameField) nameField.value = savedName;
+  }
+
   const field = document.getElementById('lobby-ip');
   if (field && !field.value) {
     field.value = window.location.hostname;
