@@ -46,7 +46,7 @@ def init_asteroids():
 def new_player(pid,name):
     color=SHIP_COLORS[len(players)%len(SHIP_COLORS)]
     return {'pid':pid,'name':name,'color':color,
-            'worldX':random.uniform(-300,300),'worldY':random.uniform(-300,300),
+            'worldX':random.uniform(-150,150),'worldY':random.uniform(-150,150),
             'vx':0,'vy':0,'dir':'north','speed':0,'animFrame':0,
             'hp':100,'fuel':10.0,'ore':0,'mineral':0,'armalcolite':0,
             'thrusting':False,'boosting':False}
@@ -127,10 +127,15 @@ async def ws_handler(request):
     return ws
 
 async def tick_loop():
+    _ast_broadcast_tick = 0
     while True:
         await asyncio.sleep(1/TICK_RATE)
         for ast in asteroids.values():
             ast['worldX']+=ast['driftVx']; ast['worldY']+=ast['driftVy']; ast['angle']+=ast['rotSpeed']
+        _ast_broadcast_tick += 1
+        if _ast_broadcast_tick >= 40:   # every ~2 s
+            _ast_broadcast_tick = 0
+            await broadcast({'type':'asteroid_sync','asteroids':list(asteroids.values())})
 
 async def main():
     init_asteroids()

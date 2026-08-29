@@ -992,6 +992,7 @@ function updateMining() {
 
 
       ast.hp        -= MINE_DAMAGE;
+      if (multiMode && socket) socket.send(JSON.stringify({ type:'mine', aid: ast.aid, damage: MINE_DAMAGE }));
 
       ast.flashTimer = 8;
 
@@ -1026,9 +1027,12 @@ function updateMining() {
 
         spawnBreakBurst(asx, asy, isDark);
 
-        asteroids.splice(asteroids.indexOf(ast), 1);
-
-        toRespawn.push({ timer: 900 });   // respawn ~15s later
+        if (multiMode && socket) {
+          // Server owns asteroid state — just notify, don't mutate locally
+        } else {
+          asteroids.splice(asteroids.indexOf(ast), 1);
+          toRespawn.push({ timer: 900 });   // respawn ~15s later
+        }
 
       }
 
@@ -1121,6 +1125,45 @@ function updateMining() {
 
 
 // ─── DRAW ASTEROIDS ──────────────────────────────────────────────────────────
+
+
+
+function drawCompass(cx, cy) {
+  if (!multiMode) return;
+  const entries = Object.values(remotePlayers);
+  if (!entries.length) return;
+  const R = 90;  // compass ring radius from center
+  for (const p of entries) {
+    const dx = p.worldX - ship.worldX;
+    const dy = p.worldY - ship.worldY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 10) continue;
+    const angle = Math.atan2(dy, dx);
+    const ax = cx + Math.cos(angle) * R;
+    const ay = cy + Math.sin(angle) * R;
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, -8); ctx.lineTo(5, 5); ctx.lineTo(0, 2); ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // distance label
+    const label = dist < 1000 ? Math.round(dist) + 'u' : (dist/1000).toFixed(1) + 'ku';
+    ctx.save();
+    ctx.font = '9px monospace';
+    ctx.fillStyle = p.color;
+    ctx.textAlign = 'center';
+    ctx.shadowColor = p.color; ctx.shadowBlur = 4;
+    ctx.fillText(p.name, ax, ay - 14);
+    ctx.fillText(label, ax, ay + 20);
+    ctx.restore();
+  }
+}
 
 function drawAsteroids(cx, cy) {
 
@@ -2262,6 +2305,16 @@ function handleServerMsg(msg) {
       delete serverAsteroids[msg.aid];
       serverOres[msg.oid] = msg.ore;
       serverAsteroids[msg.new_ast.aid] = msg.new_ast;
+      break;
+
+    case 'asteroid_sync':
+      for (const a of msg.asteroids) {
+        if (serverAsteroids[a.aid]) {
+          serverAsteroids[a.aid].worldX = a.worldX;
+          serverAsteroids[a.aid].worldY = a.worldY;
+          serverAsteroids[a.aid].angle  = a.angle;
+        }
+      }
       break;
 
     case 'ore_collected':
