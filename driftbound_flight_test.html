@@ -6,7 +6,7 @@
 
 <meta charset="UTF-8">
 
-<title>DRIFTBOUND — Flight Test v0.2</title>
+<title>DRIFTBOUND — alpha_v0.2</title>
 
 <style>
 
@@ -92,7 +92,7 @@
 
   <h1>DRIFTBOUND</h1>
 
-  <div class="sub">FLIGHT TEST v0.2</div>
+  <div class="sub">ALPHA v0.2</div>
 
   <div id="loadbar-wrap"><div id="loadbar"></div></div>
 
@@ -452,114 +452,71 @@ function loadBgSet(name) {
 
 
 async function loadAll() {
-
   const jobs = [];
 
-
-
-  for (const dir of DIRS) {
-
-    jobs.push(loadImg(`${POD_BASE}rotations/${dir}.png`).then(img => {
-
-      rotations[dir] = img;
-
-    }));
-
+  // Helper: load with timeout — never hangs the boot if an asset 404s
+  function loadImgSafe(src, ms=4000) {
+    totalAssets++;
+    return new Promise(resolve => {
+      const img = new Image();
+      const tid = setTimeout(() => { loadedAssets++; refreshBar(); resolve(null); }, ms);
+      img.onload  = () => { clearTimeout(tid); loadedAssets++; refreshBar(); resolve(img); };
+      img.onerror = () => { clearTimeout(tid); loadedAssets++; refreshBar(); resolve(null); };
+      img.src = src;
+    });
   }
 
-
-
+  // Pod ship sprites (external PNGs — timeout-safe)
   for (const dir of DIRS) {
-
+    jobs.push(loadImgSafe(`${POD_BASE}rotations/${dir}.png`).then(img => { rotations[dir] = img; }));
+  }
+  for (const dir of DIRS) {
     animations[dir] = new Array(FRAME_COUNT).fill(null);
-
     for (let f = 0; f < FRAME_COUNT; f++) {
-
-      const ff  = f;
-
-      const pad = String(f).padStart(3, '0');
-
+      const ff = f, pad = String(f).padStart(3, '0');
       jobs.push(
-
-        loadImg(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`)
-
+        loadImgSafe(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`)
           .then(img => { animations[dir][ff] = img; })
-
       );
-
     }
-
   }
-
-
-
-  // ── Load modular pod sprites ──
   for (const dir of DIRS) {
-    jobs.push(loadImg(`${POD_SPRITE_BASE}rotations/${dir}.png`).then(img => {
-      podRotations[dir] = img;
-    }));
+    jobs.push(loadImgSafe(`${POD_SPRITE_BASE}rotations/${dir}.png`).then(img => { podRotations[dir] = img; }));
   }
   for (const dir of DIRS) {
     podAnimations[dir] = new Array(FRAME_COUNT).fill(null);
     for (let f = 0; f < FRAME_COUNT; f++) {
-      const ff = f, pad = String(f).padStart(3,'0');
+      const ff = f, pad = String(f).padStart(3, '0');
       jobs.push(
-        loadImg(`${POD_SPRITE_BASE}animations/${POD_ANIM_KEY}/${dir}/frame_${pad}.png`)
+        loadImgSafe(`${POD_SPRITE_BASE}animations/${POD_ANIM_KEY}/${dir}/frame_${pad}.png`)
           .then(img => { podAnimations[dir][ff] = img; })
       );
     }
   }
 
-  // Initial BG loaded through normal loadImg so progress bar counts it
-
+  // Background layers (external PNGs — timeout-safe, fall back to procedural if null)
   const bgName = BG_SETS[currentBgIdx];
-
   const bgDefs = [
-
-    { file: `${bgName}_FLAT.png`,     speed: 0.05 },
-
-    { file: `${bgName}_L1_far.png`, speed: 0.20 },
-
-    { file: `${bgName}_L2_mid.png`, speed: 0.50 },
-
-    { file: `${bgName}_L3_near.png`,speed: 1.00 },
-
+    { file: `${bgName}_FLAT.png`,    speed: 0.05 },
+    { file: `${bgName}_L1_far.png`,  speed: 0.20 },
+    { file: `${bgName}_L2_mid.png`,  speed: 0.50 },
+    { file: `${bgName}_L3_near.png`, speed: 1.00 },
   ];
-
   const bgPromises = bgDefs.map(d =>
-
-    loadImg(`${BG_BASE}${d.file}`).then(img => ({ img, speed: d.speed }))
-
+    loadImgSafe(`${BG_BASE}${d.file}`, 5000).then(img => ({ img, speed: d.speed }))
   );
-
   jobs.push(Promise.all(bgPromises).then(layers => {
-
+    // Keep only layers where image loaded — fall back to null (drawBG handles null gracefully)
     bgLayers = layers.sort((a, b) => a.speed - b.speed);
-
   }));
 
-
-
-  // Asteroid sprites
-
+  // Asteroid sprites (timeout-safe)
   for (const t of ASTEROID_TYPES) {
-
-    jobs.push(
-
-      loadImg('Demo_assets/asteroids/' + t.id + '.png')
-
-        .then(img => { asteroidImgs[t.id] = img; })
-
-        .catch(() => {})   // skip gracefully if file missing
-
-    );
-
+    jobs.push(loadImgSafe('Demo_assets/asteroids/' + t.id + '.png')
+      .then(img => { asteroidImgs[t.id] = img; }));
   }
 
-
-
   await Promise.all(jobs);
-
 }
 
 
@@ -1689,6 +1646,7 @@ function drawToast() {
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
 
 function drawBG(camX, camY) {
+  if (!bgLayers || bgLayers.length === 0) { ctx.fillStyle='#040810'; ctx.fillRect(0,0,canvas.width,canvas.height); return; }
 
   nebTime++;
 
