@@ -1324,7 +1324,7 @@ function drawOrePickups(cx, cy) {
 
   const t    = Date.now() * 0.005;
 
-  ctx.font   = '9px Courier New';
+  ctx.font   = '13px Courier New';
 
   for (const ore of orePickups) {
 
@@ -1336,35 +1336,26 @@ function drawOrePickups(cx, cy) {
 
     const pulse = 0.5 + 0.5 * Math.sin(t + ore.worldX * 0.001);
 
-    const r     = 3 + pulse * 2.5;
-
-    // Glow ring
-
-    ctx.globalAlpha = 0.25 * pulse;
-
-    ctx.strokeStyle = '#FFD700';
-
-    ctx.lineWidth   = 1;
-
-    ctx.beginPath(); ctx.arc(sx, sy, r + 4, 0, Math.PI * 2); ctx.stroke();
-
-    // Core dot
-
-    ctx.globalAlpha = 0.7 + 0.3 * pulse;
-
-    ctx.fillStyle   = '#FFD700';
-
-    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
-
+    const r = 6 + pulse * 4;
+    const lootCol = ore.lootType==='armalcolite'?'#38bdf8':ore.lootType==='mineral'?'#a78bfa':'#FFD700';
+    const lootLbl = ore.lootType==='armalcolite'?(ore.amount+' ARMALCOLITE')
+                  : ore.lootType==='mineral'?    (ore.amount+' MINERAL MAT')
+                  :                              (ore.amount+' NEBULITE');
+    // Outer glow
+    ctx.globalAlpha=0.35*pulse; ctx.strokeStyle=lootCol; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(sx,sy,r+8,0,Math.PI*2); ctx.stroke();
+    // Inner ring
+    ctx.globalAlpha=0.55*pulse; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx,sy,r+3,0,Math.PI*2); ctx.stroke();
+    // Core
+    ctx.globalAlpha=0.85+0.15*pulse;
+    ctx.fillStyle=lootCol; ctx.shadowColor=lootCol; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
     // Label
-
-    ctx.globalAlpha = 0.8;
-
-    ctx.fillStyle   = '#FFD700';
-
-    ctx.fillText(ore.amount + ' ORE', sx + r + 4, sy + 4);
-
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha=1; ctx.fillStyle=lootCol;
+    ctx.fillText(lootLbl, sx+r+6, sy+5);
+    ctx.globalAlpha=1;
 
   }
 
@@ -1414,7 +1405,7 @@ function drawToast() {
 
   ctx.globalAlpha = alpha;
 
-  ctx.font        = '11px Courier New';
+  ctx.font        = '22px Courier New';
 
   ctx.textAlign   = 'center';
 
@@ -1564,8 +1555,8 @@ function drawShip(cx, cy, now, speed) {
 
 // Everything drawn on canvas at 9px Courier New — single consistent style.
 
-const HUD_FONT    = '13px Courier New';
-const HUD_FONT_SM = '11px Courier New';
+const HUD_FONT    = '26px Courier New';
+const HUD_FONT_SM = '22px Courier New';
 const HUD_COLOR = '#4FC3C3';
 const HUD_DIM   = '#4FC3C380';
 
@@ -1580,8 +1571,8 @@ function hLine(label, value, x, y) {
 function drawHUD(speed) {
   const LEFT  = 22;
   const TOP   = 28;
-  const PW    = 245;
-  const LH    = 17;
+  const PW    = 490;
+  const LH    = 34;
 
   const statsTop = TOP + 14;
   const thrustY  = statsTop + LH * 3 + 12;
@@ -1606,7 +1597,7 @@ function drawHUD(speed) {
   hLine('POS', Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), LEFT, statsTop + LH * 2);
 
   // THRUST bar
-  const bx = LEFT, by = thrustY, bw = PW - 34, bh = 5;
+  const bx = LEFT, by = thrustY, bw = PW - 68, bh = 10;
   ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
   ctx.fillText('THRUST', bx, by - 5);
   ctx.fillStyle = '#0d1520';
@@ -1619,7 +1610,7 @@ function drawHUD(speed) {
   ctx.strokeRect(bx, by, bw, bh);
 
   // HULL bar
-  const hbx = LEFT, hby = hullY, hbw = PW - 34, hbh = 5;
+  const hbx = LEFT, hby = hullY, hbw = PW - 68, hbh = 10;
   const hpPct = ship.hp / SHIP_MAX_HP;
   ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
   ctx.fillText('HULL', hbx, hby - 4);
@@ -1635,15 +1626,36 @@ function drawHUD(speed) {
   ctx.fillRect(hbx, hby, hbw * hpPct, hbh);
   ctx.strokeStyle = '#ffffff18'; ctx.lineWidth = 1;
   ctx.strokeRect(hbx, hby, hbw, hbh);
-  if (ship.hp <= 0 && Math.floor(Date.now()/400)%2===0) {
-    ctx.fillStyle = '#ff2222'; ctx.font = 'bold 14px Courier New'; ctx.textAlign = 'center';
-    ctx.fillText('\u2715 HULL BREACH \u2014 CRITICAL', canvas.width/2, canvas.height/2 - 20);
-    ctx.textAlign = 'left';
+  if (ship.hp <= 0) {
+    if (!ship.destroyed) {
+      ship.destroyed = true; ship.destroyedAt = Date.now();
+      for (let i = 0; i < 60; i++) {
+        const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*5;
+        particles.push({x:canvas.width/2,y:canvas.height/2,
+          vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+          life:80+Math.random()*60,maxLife:140,
+          color:['#ff4444','#ff8800','#ffcc00','#ffffff'][Math.floor(Math.random()*4)],
+          size:2+Math.random()*4});
+      }
+    }
+    const elapsed = Date.now() - (ship.destroyedAt||Date.now());
+    const remaining = Math.ceil((4000-elapsed)/1000);
+    ctx.fillStyle='#000000bb'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign='center';
+    ctx.font='bold 32px Courier New'; ctx.fillStyle='#ff2222';
+    ctx.fillText('\u2715  SHIP DESTROYED',canvas.width/2,canvas.height/2-30);
+    ctx.font='20px Courier New'; ctx.fillStyle='#ff8800';
+    ctx.fillText('RESPAWNING IN '+Math.max(0,remaining)+'...',canvas.width/2,canvas.height/2+14);
+    ctx.textAlign='left';
+    if (elapsed>=4000) {
+      ship.hp=SHIP_MAX_HP; ship.worldX=(Math.random()-0.5)*300; ship.worldY=(Math.random()-0.5)*300;
+      ship.vx=0; ship.vy=0; ship.destroyed=false; showToast('RESPAWNED','#22c55e');
+    }
   }
 
   // FUEL segments
   const fx = LEFT, fy = fuelY;
-  const segCount = 10, segW = Math.floor((PW - 36) / 10) - 1, segH = 12, segGap = 2;
+  const segCount = 10, segW = Math.floor((PW - 68) / 10) - 2, segH = 24, segGap = 3;
   const fuelPct = ship.fuel / FUEL_CAPACITY;
   const filledSegs = Math.ceil(fuelPct * segCount);
   ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
@@ -1673,10 +1685,10 @@ function drawHUD(speed) {
   // CARGO
   ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
   // Ship name header
-  ctx.font = 'bold 9px Courier New'; ctx.fillStyle = '#4FC3C3';
+  ctx.font = 'bold 18px Courier New'; ctx.fillStyle = '#4FC3C3';
   ctx.fillText('⬡ ' + ship.shipType.name, LEFT, oreY - 2);
   // Cargo bar
-  const cUsed = cargoUsed(), cMax = CARGO_LIMIT, cbw = PW - 36;
+  const cUsed = cargoUsed(), cMax = CARGO_LIMIT, cbw = PW - 68;
   const cPct  = Math.min(cUsed / cMax, 1);
   const cFull = cUsed >= cMax;
   ctx.font = HUD_FONT_SM;
@@ -1693,14 +1705,14 @@ function drawHUD(speed) {
   ctx.fillStyle = ship.ore > 0 ? '#FFD700' : '#FFD70040';
   ctx.fillText(ship.ore + ' NEBULITE', LEFT + 56, oreY);
 
-  ctx.font = 'bold 12px monospace';
+  ctx.font = 'bold 24px monospace';
   ctx.fillStyle = ship.mineral > 0 ? '#a78bfa' : '#a78bfa40';
   ctx.fillText('\u2666', LEFT + 14, minY);
   ctx.font = HUD_FONT_SM;
   ctx.fillStyle = ship.mineral > 0 ? '#c4b5fd' : '#c4b5fd50';
   ctx.fillText(ship.mineral + ' MINERAL', LEFT + 30, minY);
 
-  ctx.font = 'bold 12px monospace';
+  ctx.font = 'bold 24px monospace';
   ctx.fillStyle = ship.armalcolite > 0 ? '#34d399' : '#34d39940';
   ctx.fillText('\u25c8', LEFT + 14, armY);
   ctx.font = HUD_FONT_SM;
@@ -1709,7 +1721,7 @@ function drawHUD(speed) {
 
   // PILOTS ONLINE
   if (typeof multiMode !== 'undefined' && multiMode) {
-    ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 24px monospace'; ctx.fillStyle = '#38bdf8';
     ctx.fillText('\u25a0', LEFT + 14, pilotY);
     ctx.font = HUD_FONT_SM; ctx.fillStyle = '#38bdf8';
     ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 30, pilotY);
@@ -2393,8 +2405,9 @@ function handleServerMsg(msg) {
       break;
 
     case 'player_move':
-      if (msg.pid !== myPid) remotePlayers[msg.pid] = msg.player;
-      break;
+      if (msg.pid !== myPid) {
+        remotePlayers[msg.pid] = msg.player;
+      } break;
 
     case 'player_left':
       delete remotePlayers[msg.pid];
@@ -2466,6 +2479,7 @@ function sendMove() {
   socket.send(JSON.stringify({
     type: 'move', worldX: ship.worldX, worldY: ship.worldY,
     vx: ship.vx, vy: ship.vy, dir: ship.dir,
+    laserWx: ship.laserWx||null, laserWy: ship.laserWy||null, laserTimer: ship.laserTimer||0,
     speed: Math.hypot(ship.vx, ship.vy), animFrame: ship.animFrame,
     hp: ship.hp, fuel: ship.fuel, ore: ship.ore, pvpIframes: ship.pvpIframes,
     mineral: ship.mineral, armalcolite: ship.armalcolite,
@@ -2521,15 +2535,42 @@ function drawRemotePlayers(cx, cy) {
       ctx.shadowBlur = 0;
     }
     ctx.restore();
+    const worldDist = Math.hypot(p.worldX-ship.worldX, p.worldY-ship.worldY);
+    const _hpPct = Math.max(0,(p.hp||100)/100);
+    const _hpCol = _hpPct>0.5?'#22c55e':_hpPct>0.25?'#f59e0b':'#ef4444';
     ctx.save();
-    ctx.font = '10px monospace'; ctx.fillStyle = p.color; ctx.textAlign = 'center';
-    ctx.fillText(p.name, sx, sy - 26);
-    const barW = 36, hpPct = Math.max(0, p.hp / 100);
-    ctx.fillStyle = '#0d1520';
-    ctx.fillRect(sx - barW/2 - 1, sy - 22, barW + 2, 4);
-    ctx.fillStyle = hpPct > 0.5 ? '#22c55e' : hpPct > 0.25 ? '#f59e0b' : '#ef4444';
-    ctx.fillRect(sx - barW/2, sy - 21, barW * hpPct, 2);
+    ctx.textAlign='center';
+    ctx.font='13px monospace'; ctx.fillStyle=p.color;
+    ctx.fillText(p.name, sx, sy-32);
+    if (worldDist < 600) {
+      const bW=80,bH=8,bx=sx-40,by=sy-26;
+      ctx.fillStyle='#000000cc'; ctx.fillRect(bx-2,by-2,bW+4,bH+4);
+      ctx.fillStyle='#0d1520';   ctx.fillRect(bx,by,bW,bH);
+      ctx.fillStyle=_hpCol;      ctx.fillRect(bx,by,bW*_hpPct,bH);
+      ctx.strokeStyle=_hpCol+'88'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bW,bH);
+      ctx.font='10px Courier New'; ctx.fillStyle=_hpCol;
+      ctx.fillText(Math.round(p.hp||100)+'/100', sx, by+bH+13);
+    } else {
+      const bW=36;
+      ctx.fillStyle='#0d1520';  ctx.fillRect(sx-bW/2-1,sy-22,bW+2,4);
+      ctx.fillStyle=_hpCol;     ctx.fillRect(sx-bW/2,sy-21,bW*_hpPct,2);
+    }
     ctx.restore();
+
+    // Remote player mining beam
+    if (p.laserTimer > 0 && p.laserWx != null) {
+      const btx = cx+(p.laserWx-ship.worldX), bty = cy+(p.laserWy-ship.worldY);
+      const ba  = Math.min(1, p.laserTimer/10)*0.7;
+      ctx.save();
+      ctx.globalAlpha=ba; ctx.strokeStyle=p.color; ctx.lineWidth=1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(btx,bty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowColor=p.color; ctx.shadowBlur=12;
+      ctx.beginPath(); ctx.arc(btx,bty,5,0,Math.PI*2);
+      ctx.fillStyle=p.color; ctx.fill();
+      ctx.shadowBlur=0; ctx.restore();
+    }
   }
 }
 
