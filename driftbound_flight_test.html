@@ -451,6 +451,65 @@ function loadBgSet(name) {
 
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROCEDURAL BACKGROUND — seeded LCG, deterministic layout every run
+// ═══════════════════════════════════════════════════════════════════════════
+const _BG = { stars: [], nebulae: [], dust: [] };
+
+function _initBG() {
+  let _s = 42;
+  const rng = () => { _s = (_s * 1664525 + 1013904223) & 0xFFFFFFFF; return (_s >>> 0) / 0xFFFFFFFF; };
+  const WS2 = WORLD_SIZE * 2;
+
+  // Nebulae
+  const nebPal = [
+    ['rgba(20,5,60,0)','rgba(40,10,100,0.18)'],
+    ['rgba(0,20,50,0)','rgba(0,60,120,0.14)'],
+    ['rgba(30,0,20,0)','rgba(90,10,60,0.12)'],
+    ['rgba(0,30,20,0)','rgba(0,80,60,0.10)'],
+    ['rgba(50,20,0,0)','rgba(120,50,10,0.09)'],
+  ];
+  for (let i = 0; i < 10; i++) {
+    const p = nebPal[Math.floor(rng() * nebPal.length)];
+    _BG.nebulae.push({ wx:(rng()-.5)*WS2*1.4, wy:(rng()-.5)*WS2*1.4,
+      r:.3+rng()*.5, ex:.6+rng()*.8, ey:.4+rng()*.6, rot:rng()*Math.PI*2,
+      a:.55+rng()*.35, par:.08+rng()*.06, c0:p[1], c1:p[0] });
+  }
+
+  // Deep dust (layer 0)
+  for (let i = 0; i < 2200; i++) {
+    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
+      r:.3+rng()*.4, a:.15+rng()*.35, par:.012+rng()*.015, bloom:false,
+      col:`rgb(${180+~~(rng()*60)},${185+~~(rng()*55)},${200+~~(rng()*55)})` });
+  }
+  // Mid stars (layer 1)
+  for (let i = 0; i < 600; i++) {
+    const w = rng()>.5;
+    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
+      r:.5+rng()*.7, a:.45+rng()*.45, par:.05+rng()*.04, bloom:false,
+      col: w ? `rgb(${220+~~(rng()*35)},${200+~~(rng()*40)},${150+~~(rng()*60)})`
+             : `rgb(${160+~~(rng()*60)},${200+~~(rng()*40)},${230+~~(rng()*25)})` });
+  }
+  // Bright stars (layer 2)
+  for (let i = 0; i < 90; i++) {
+    const bloom = rng()>.75, t = rng();
+    const col = t<.3 ? `rgb(255,${160+~~(t*200)},${80+~~(t*100)})`
+              : t<.7 ? `rgb(230,235,255)`
+                     : `rgb(${160+~~((1-t)*200)},${190+~~((1-t)*60)},255)`;
+    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
+      r:1.0+rng()*1.4, a:.75+rng()*.25, par:.14+rng()*.08, bloom, col });
+  }
+
+  // Dust streaks
+  const dCols=['rgba(80,100,160,1)','rgba(60,80,130,1)','rgba(100,80,140,1)','rgba(60,100,110,1)'];
+  for (let i = 0; i < 45; i++) {
+    _BG.dust.push({ wx:(rng()-.5)*WS2*1.5, wy:(rng()-.5)*WS2*1.5,
+      len:60+rng()*180, rot:rng()*Math.PI*2, a:.04+rng()*.08,
+      par:.28+rng()*.12, col:dCols[~~(rng()*dCols.length)] });
+  }
+}
+
 async function loadAll() {
   const jobs = [];
 
@@ -494,21 +553,6 @@ async function loadAll() {
     }
   }
 
-  // Background layers (external PNGs — timeout-safe, fall back to procedural if null)
-  const bgName = BG_SETS[currentBgIdx];
-  const bgDefs = [
-    { file: `${bgName}_FLAT.png`,    speed: 0.05 },
-    { file: `${bgName}_L1_far.png`,  speed: 0.20 },
-    { file: `${bgName}_L2_mid.png`,  speed: 0.50 },
-    { file: `${bgName}_L3_near.png`, speed: 1.00 },
-  ];
-  const bgPromises = bgDefs.map(d =>
-    loadImgSafe(`${BG_BASE}${d.file}`, 5000).then(img => ({ img, speed: d.speed }))
-  );
-  jobs.push(Promise.all(bgPromises).then(layers => {
-    // Keep only layers where image loaded — fall back to null (drawBG handles null gracefully)
-    bgLayers = layers.sort((a, b) => a.speed - b.speed);
-  }));
 
   // Asteroid sprites (timeout-safe)
   for (const t of ASTEROID_TYPES) {
@@ -1646,82 +1690,76 @@ function drawToast() {
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
 
 function drawBG(camX, camY) {
-  if (!bgLayers || bgLayers.length === 0) { ctx.fillStyle='#040810'; ctx.fillRect(0,0,canvas.width,canvas.height); return; }
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2;
 
-  nebTime++;
+  // ── Deep void base ──
+  ctx.fillStyle = '#020508';
+  ctx.fillRect(0, 0, W, H);
 
-  const cw = canvas.width, ch = canvas.height;
+  // ── Vignette ──
+  const vg = ctx.createRadialGradient(cx, cy, H * 0.15, cx, cy, H * 0.85);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,2,8,0.72)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
 
-
-
-  for (let li = 0; li < bgLayers.length; li++) {
-
-    const layer = bgLayers[li];
-
-    const neb   = NEB_LAYERS[Math.min(li, NEB_LAYERS.length - 1)];
-
-    const img   = layer.img;
-
-    if (!img || !img.width) continue;
-
-    const iw = img.width, ih = img.height;
-
-
-
-    // Parallax offset driven by camera position
-
-    let ox = (((-camX * layer.speed) % iw) + iw) % iw;
-
-    let oy = (((-camY * layer.speed) % ih) + ih) % ih;
-
-
-
-    // Autonomous drift — each layer moves at its own speed and direction
-
-    // Vertical component gets a slow sine wave so the gas undulates as it drifts
-
-    const driftX = (nebTime * neb.vx) % iw;
-
-    const driftY = (nebTime * neb.vy) + Math.sin(nebTime * neb.pulseSpd * 0.4 + neb.phase) * neb.wave;
-
-    ox = ((ox + driftX) % iw + iw) % iw;
-
-    oy = ((oy + driftY) % ih + ih) % ih;
-
-
-
-    // Opacity — two overlapping sines with different periods, out of phase.
-
-    // Gives organic breathing: not perfectly rhythmic, more like drifting gas.
-
-    const pulse = neb.pulseAmp * 0.5 * Math.sin(nebTime * neb.pulseSpd + neb.phase)
-
-                + neb.pulseAmp * 0.3 * Math.sin(nebTime * neb.pulseSpd * 1.6 + neb.phase + 1.1);
-
-    const alpha = Math.max(0.38, Math.min(1.0, 1.0 - neb.pulseAmp * 0.4 + pulse));
-
-
-
-    ctx.globalAlpha = alpha;
-
-
-
-    const cols = Math.ceil(cw / iw) + 2;
-
-    const rows = Math.ceil(ch / ih) + 2;
-
-    for (let tx = -1; tx < cols; tx++)
-
-      for (let ty = -1; ty < rows; ty++)
-
-        ctx.drawImage(img, ox + tx * iw, oy + ty * ih, iw, ih);
-
-
-
-    ctx.globalAlpha = 1;
-
+  // ── Nebula clouds ──
+  for (const n of _BG.nebulae) {
+    const px = ((n.wx - camX * n.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
+    const py = ((n.wy - camY * n.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
+    const r = n.r * Math.max(W, H);
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+    g.addColorStop(0, n.c0);
+    g.addColorStop(0.5, n.c1);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save();
+    ctx.globalAlpha = n.a;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(px, py, r * n.ex, r * n.ey, n.rot, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
+  // ── Stars ──
+  for (const s of _BG.stars) {
+    const px = ((s.wx - camX * s.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
+    const py = ((s.wy - camY * s.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
+    if (px < -8 || px > W + 8 || py < -8 || py > H + 8) continue;
+    ctx.globalAlpha = s.a;
+    if (s.bloom) {
+      const bloom = ctx.createRadialGradient(px, py, 0, px, py, s.r * 6);
+      bloom.addColorStop(0, s.col);
+      bloom.addColorStop(0.15, s.col);
+      bloom.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = bloom;
+      ctx.beginPath(); ctx.arc(px, py, s.r * 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = s.col; ctx.lineWidth = 0.5; ctx.globalAlpha = s.a * 0.35;
+      ctx.beginPath(); ctx.moveTo(px - s.r*10, py); ctx.lineTo(px + s.r*10, py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px, py - s.r*10); ctx.lineTo(px, py + s.r*10); ctx.stroke();
+      ctx.globalAlpha = s.a;
+    }
+    ctx.fillStyle = s.col;
+    ctx.beginPath(); ctx.arc(px, py, s.r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ── Dust streaks ──
+  for (const dk of _BG.dust) {
+    const px = ((dk.wx - camX * dk.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
+    const py = ((dk.wy - camY * dk.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
+    if (px < -220 || px > W + 220 || py < -220 || py > H + 220) continue;
+    ctx.save();
+    ctx.globalAlpha = dk.a;
+    ctx.translate(px, py); ctx.rotate(dk.rot);
+    const dg = ctx.createRadialGradient(0, 0, 0, 0, 0, dk.len);
+    dg.addColorStop(0, dk.col); dg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = dg; ctx.scale(1, 0.18);
+    ctx.beginPath(); ctx.arc(0, 0, dk.len, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = 1;
 }
 
 
@@ -2935,6 +2973,7 @@ async function boot() {
 
   if (debugMode) drawDebug(speed);
 
+  _initBG();
   requestAnimationFrame(loop);
 
 }
