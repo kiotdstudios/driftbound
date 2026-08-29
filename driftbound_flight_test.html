@@ -265,17 +265,17 @@ const POD_BASE = 'pod_sprites/Create_a_small_modular_spacecr/';
 
 const ANIM_KEY = '8-frame_spaceship_flying_animation._Keep_the_ship';
 
-const BG_BASE  = 'space_parallax_backgrounds_v1/assets/';
+const BG_BASE  = 'vapor space bg/';
 
 
 
 // All 20 available backgrounds — cycle with [ / ]
 
 const BG_SETS = [
-  'vapor_01', 'vapor_03', 'vapor_04', 'vapor_05',
+  'vapor_01', 'vapor_02', 'vapor_04', 'vapor_05',
 ];
 
-let currentBgIdx = 1;   // vapor_03 default (index 1 in vapor-only list)
+let currentBgIdx = 1;   // vapor_02 default (most complete set)
 
 
 
@@ -335,13 +335,13 @@ function loadBgSet(name) {
 
   const defs = [
 
-    { file: `flat/${name}_FLAT.png`,     speed: 0.05 },
+    { file: `${name}_FLAT.png`,     speed: 0.05 },
 
-    { file: `layers/${name}_L1_far.png`, speed: 0.20 },
+    { file: `${name}_L1_far.png`, speed: 0.20 },
 
-    { file: `layers/${name}_L2_mid.png`, speed: 0.50 },
+    { file: `${name}_L2_mid.png`, speed: 0.50 },
 
-    { file: `layers/${name}_L3_near.png`,speed: 1.00 },
+    { file: `${name}_L3_near.png`,speed: 1.00 },
 
   ];
 
@@ -423,13 +423,13 @@ async function loadAll() {
 
   const bgDefs = [
 
-    { file: `flat/${bgName}_FLAT.png`,     speed: 0.05 },
+    { file: `${bgName}_FLAT.png`,     speed: 0.05 },
 
-    { file: `layers/${bgName}_L1_far.png`, speed: 0.20 },
+    { file: `${bgName}_L1_far.png`, speed: 0.20 },
 
-    { file: `layers/${bgName}_L2_mid.png`, speed: 0.50 },
+    { file: `${bgName}_L2_mid.png`, speed: 0.50 },
 
-    { file: `layers/${bgName}_L3_near.png`,speed: 1.00 },
+    { file: `${bgName}_L3_near.png`,speed: 1.00 },
 
   ];
 
