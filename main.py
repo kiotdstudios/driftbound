@@ -147,6 +147,7 @@ async def main():
     app.router.add_static('/pod_sprites',                    'pod_sprites',                    show_index=False)
     app.router.add_static('/space_parallax_backgrounds_v1',  'space_parallax_backgrounds_v1',  show_index=False)
     app.router.add_static('/Demo_assets',                    'Demo_assets',                    show_index=False)
+    app.router.add_static('/vapor space bg',                 'vapor space bg',                 show_index=False)
 
     runner = web.AppRunner(app)
     await runner.setup()
