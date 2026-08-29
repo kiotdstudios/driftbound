@@ -217,6 +217,18 @@ const ASTEROID_TYPES = [
 
 // Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
 // 10 slots: 3 planet, 4 sm_brown, 3 lg_brown
+
+
+// Rehydrate a server asteroid: attach full type object from ASTEROID_TYPES by type_id
+function rehydrateAsteroid(a) {
+  if (a.type && a.type.w) return a;  // already has full type, nothing to do
+  const t = ASTEROID_TYPES.find(t => t.id === a.type_id);
+  if (t) a.type = t;
+  // Ensure maxHp exists
+  if (!a.maxHp && t) a.maxHp = t.hp;
+  return a;
+}
+
 const ASTEROID_POOL = [2, 0,0,0,0, 1,1,1, 2,2];  // index into ASTEROID_TYPES
 
 // In multiMode, server owns asteroid state — use this getter everywhere
@@ -2004,6 +2016,7 @@ function update() {
   } else {
 
     for (const ast of getAsteroids()) {
+      if (!ast.type || !ast.type.w) continue;  // skip if not yet rehydrated
 
       const dx   = ast.worldX - ship.worldX;
 
@@ -2266,7 +2279,7 @@ function handleServerMsg(msg) {
       myColor = msg.color;
       multiMode = true;
       serverAsteroids = {};
-      for (const a of msg.asteroids) serverAsteroids[a.aid] = a;
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
       serverOres = {};
       for (const o of msg.ores) serverOres[o.oid] = o;
       remotePlayers = {};
@@ -2279,7 +2292,7 @@ function handleServerMsg(msg) {
       remotePlayers = {};
       for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
       serverAsteroids = {};
-      for (const a of msg.asteroids) serverAsteroids[a.aid] = a;
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
       serverOres = {};
       for (const o of msg.ores) serverOres[o.oid] = o;
       break;
@@ -2304,7 +2317,7 @@ function handleServerMsg(msg) {
     case 'asteroid_destroyed':
       delete serverAsteroids[msg.aid];
       serverOres[msg.oid] = msg.ore;
-      serverAsteroids[msg.new_ast.aid] = msg.new_ast;
+      serverAsteroids[msg.new_ast.aid] = rehydrateAsteroid(msg.new_ast);
       break;
 
     case 'asteroid_sync':
@@ -2313,6 +2326,10 @@ function handleServerMsg(msg) {
           serverAsteroids[a.aid].worldX = a.worldX;
           serverAsteroids[a.aid].worldY = a.worldY;
           serverAsteroids[a.aid].angle  = a.angle;
+          rehydrateAsteroid(serverAsteroids[a.aid]);
+        } else {
+          // New asteroid we don't have yet — add and rehydrate
+          serverAsteroids[a.aid] = rehydrateAsteroid(a);
         }
       }
       break;
