@@ -2172,17 +2172,42 @@ let serverTick    = 0;
 
 function lobbyConnect() {
   const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
-    const ipInput = (document.getElementById('lobby-ip').value || '').trim();
+  const ipInput = (document.getElementById('lobby-ip').value || '').trim();
   const autoHost = window.location.hostname;
   const ip = ipInput || autoHost;
   const isLocal = ip==='localhost'||ip.startsWith('192.')||ip.startsWith('10.');
   const url = isLocal ? 'ws://'+ip+':8080/ws' : 'wss://'+ip+'/ws';
+  console.log('[DB] lobbyConnect() called');
+  console.log('[DB] window.location.hostname =', autoHost);
+  console.log('[DB] window.location.href =', window.location.href);
+  console.log('[DB] ipInput (from field) =', JSON.stringify(ipInput));
+  console.log('[DB] ip resolved =', ip);
+  console.log('[DB] isLocal =', isLocal);
+  console.log('[DB] WebSocket URL =', url);
   setLobbyStatus('Connecting to ' + url + '...');
-  try { socket = new WebSocket(url); } catch(e) { setLobbyStatus('Invalid address.'); return; }
-  socket.onopen    = () => socket.send(JSON.stringify({ type: 'join', name }));
-  socket.onmessage = (ev) => handleServerMsg(JSON.parse(ev.data));
-  socket.onerror   = () => { setLobbyStatus('Could not connect — is the server running?'); socket = null; };
-  socket.onclose   = () => { if (multiMode) showToast('Disconnected from server', '#ef4444'); multiMode = false; socket = null; };
+  try { socket = new WebSocket(url); } catch(e) {
+    console.error('[DB] WebSocket constructor threw:', e.message);
+    setLobbyStatus('Invalid address.'); return;
+  }
+  socket.onopen = () => {
+    console.log('[DB] socket.onopen — connected, sending join');
+    socket.send(JSON.stringify({ type: 'join', name }));
+  };
+  socket.onmessage = (ev) => {
+    console.log('[DB] socket.onmessage:', ev.data.slice(0, 120));
+    handleServerMsg(JSON.parse(ev.data));
+  };
+  socket.onerror = (e) => {
+    console.error('[DB] socket.onerror fired');
+    console.error('[DB] readyState:', socket ? socket.readyState : 'null');
+    setLobbyStatus('Could not connect — is the server running?');
+    socket = null;
+  };
+  socket.onclose = (e) => {
+    console.warn('[DB] socket.onclose — code:', e.code, '| reason:', e.reason, '| wasClean:', e.wasClean);
+    if (multiMode) showToast('Disconnected from server', '#ef4444');
+    multiMode = false; socket = null;
+  };
 }
 
 function setLobbyStatus(msg) {
