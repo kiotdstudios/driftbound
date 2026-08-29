@@ -1509,28 +1509,48 @@ function updatePods() {
     }
   }
 }
-}
+
 
 function drawAttachedPods(cx, cy) {
-  // Draw modules + save indicator top-right
-  ctx.save();
-  ctx.textAlign = 'right';
-  ctx.font = '11px Courier New';
-  // Auto-save flash indicator
-  const saveFlash = _autoSaveTimer > 1780;   // last 20 frames of 30s cycle
-  if (saveFlash) {
-    ctx.fillStyle = '#22c55e';
-    ctx.fillText('● SAVING...', canvas.width - 14, 16);
-  }
   if (attachedPods.length) {
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillText('MODULES:', canvas.width - 14, 28);
-    attachedPods.forEach((p, i) => {
-      ctx.fillStyle = p.color || '#38bdf8';
-      ctx.fillText('⬡ ' + p.label, canvas.width - 14, 28 + (i+1)*16);
+    const t = Date.now() * 0.001;
+    const DIR_OFFSETS = {
+      north:{ox:0,oy:38},northeast:{ox:-27,oy:27},east:{ox:-38,oy:0},
+      southeast:{ox:-27,oy:-27},south:{ox:0,oy:-38},southwest:{ox:27,oy:-27},
+      west:{ox:38,oy:0},northwest:{ox:27,oy:27},
+    };
+    const off = DIR_OFFSETS[ship.dir] || {ox:0,oy:38};
+    attachedPods.forEach((pod, idx) => {
+      const dist  = 42 + idx * 36;
+      const ratio = dist / 38;
+      const px = cx + off.ox * ratio;
+      const py = cy + off.oy * ratio;
+      ctx.save();
+      ctx.strokeStyle = "#38bdf866"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.translate(px, py + Math.sin(t*1.8+idx*1.2)*2);
+      ctx.shadowColor = pod.color || "#38bdf8"; ctx.shadowBlur = 10;
+      const podFrame = podRotations["south"];
+      if (podFrame) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(podFrame, -22, -22, 44, 44);
+      } else {
+        ctx.fillStyle = (pod.color||"#38bdf8")+"cc";
+        ctx.beginPath();
+        for(let k=0;k<6;k++){const a=(k/6)*Math.PI*2-Math.PI/6;
+          k===0?ctx.moveTo(Math.cos(a)*14,Math.sin(a)*14):ctx.lineTo(Math.cos(a)*14,Math.sin(a)*14);}
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.shadowBlur=0; ctx.restore();
     });
   }
-  ctx.restore();
+  if (_autoSaveTimer > 1780) {
+    ctx.save(); ctx.textAlign="right"; ctx.font="11px Courier New";
+    ctx.fillStyle="#22c55e"; ctx.fillText("SAVING...", canvas.width-14, 16);
+    ctx.restore();
+  }
 }
 
 function drawOrePickups(cx, cy) {
@@ -1784,230 +1804,166 @@ function hLine(label, value, x, y) {
 }
 
 function drawHUD(speed) {
-  const LEFT  = 22;
-  const TOP   = 28;
-  const PW    = 490;
-  const LH    = 34;
+  const L=18, PW=310, LINE=22;
+  const SML="13px Courier New", MED="15px Courier New";
+  const DIM="#4a6070", TEAL="#4FC3C3", ORANGE="#D9541E", WHT="#c8d8e8";
 
-  const statsTop = TOP + 14;
-  const thrustY  = statsTop + LH * 3 + 12;
-  const hullY    = thrustY + 24;
-  const fuelY    = hullY  + 30;
-  const oreY     = fuelY  + 46;
-  const minY     = oreY   + LH + 4;
-  const armY     = minY   + LH + 2;
-  const pilotY   = armY   + LH + 6;
-  const hintY    = pilotY + LH + 8;
-  const panelH   = hintY  + LH * 2 + 16;
+  function sBar(y, lbl, col) {
+    col = col||TEAL;
+    ctx.fillStyle=col+"28"; ctx.fillRect(10,y-14,PW,18);
+    ctx.fillStyle=col;      ctx.fillRect(10,y-14,3,18);
+    ctx.font="bold 11px Courier New"; ctx.fillStyle=col;
+    ctx.fillText(lbl, L+6, y);
+  }
+  function kv(key,val,x,y,vc) {
+    ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText(key,x,y);
+    ctx.font=MED; ctx.fillStyle=vc||WHT; ctx.fillText(val,x+68,y);
+  }
+  function hbar(x,y,w,h,pct,c1,c2) {
+    ctx.fillStyle="#0d1520"; ctx.fillRect(x-1,y-1,w+2,h+2);
+    const g=ctx.createLinearGradient(x,0,x+w,0);
+    g.addColorStop(0,c1); g.addColorStop(1,c2||c1);
+    ctx.fillStyle=g; ctx.fillRect(x,y,w*Math.min(pct,1),h);
+    ctx.strokeStyle="#ffffff14"; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+  }
 
-  ctx.fillStyle = '#000000d0';
-  ctx.fillRect(10, 10, PW, panelH);
-  ctx.strokeStyle = '#4FC3C344';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(10, 10, PW, panelH);
+  const resCount=(ship.ore>0?1:0)+(ship.mineral>0?1:0)+(ship.armalcolite>0?1:0);
+  const modRows =attachedPods.length;
+  const netRow  =(typeof multiMode!=="undefined"&&multiMode)?1:0;
+  const panelH  =312+resCount*LINE+(modRows?(LINE*(modRows+1)):0)+(netRow?LINE*2:0);
 
-  // STATS
-  hLine('SPD', speed.toFixed(2),                                           LEFT, statsTop);
-  hLine('DIR', ship.dir.replace('-', ' ').toUpperCase(),                   LEFT, statsTop + LH);
-  hLine('POS', Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), LEFT, statsTop + LH * 2);
+  ctx.fillStyle="#000000e0"; ctx.fillRect(10,10,PW,panelH);
+  ctx.strokeStyle=TEAL+"30"; ctx.lineWidth=1; ctx.strokeRect(10,10,PW,panelH);
+  ctx.fillStyle=TEAL+"50";   ctx.fillRect(10,10,3,panelH);
 
-  // THRUST bar
-  const bx = LEFT, by = thrustY, bw = PW - 68, bh = 10;
-  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
-  ctx.fillText('THRUST', bx, by - 5);
-  ctx.fillStyle = '#0d1520';
-  ctx.fillRect(bx-1, by-1, bw+2, bh+2);
-  const grad = ctx.createLinearGradient(bx, 0, bx+bw, 0);
-  grad.addColorStop(0,'#4FC3C3'); grad.addColorStop(0.6,'#D9541E'); grad.addColorStop(1,'#ff2222');
-  ctx.fillStyle = grad;
-  ctx.fillRect(bx, by, (speed / BOOST_MAX) * bw, bh);
-  ctx.strokeStyle = '#4FC3C340'; ctx.lineWidth = 1;
-  ctx.strokeRect(bx, by, bw, bh);
+  let y=30;
 
-  // HULL bar
-  const hbx = LEFT, hby = hullY, hbw = PW - 68, hbh = 10;
-  const hpPct = ship.hp / SHIP_MAX_HP;
-  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
-  ctx.fillText('HULL', hbx, hby - 4);
-  ctx.fillStyle = hpPct < 0.25 ? '#ff4444' : HUD_COLOR;
-  ctx.fillText(ship.hp + ' / ' + SHIP_MAX_HP, hbx + hbw - 52, hby - 4);
-  ctx.fillStyle = '#0d1520';
-  ctx.fillRect(hbx-1, hby-1, hbw+2, hbh+2);
-  const hGrad = ctx.createLinearGradient(hbx, 0, hbx+hbw, 0);
-  if (hpPct > 0.5)       { hGrad.addColorStop(0,'#22bb55'); hGrad.addColorStop(1,'#44ff88'); }
-  else if (hpPct > 0.25) { hGrad.addColorStop(0,'#aa6600'); hGrad.addColorStop(1,'#ffcc00'); }
-  else                   { hGrad.addColorStop(0,'#880000'); hGrad.addColorStop(1,'#ff2222'); }
-  ctx.fillStyle = hGrad;
-  ctx.fillRect(hbx, hby, hbw * hpPct, hbh);
-  ctx.strokeStyle = '#ffffff18'; ctx.lineWidth = 1;
-  ctx.strokeRect(hbx, hby, hbw, hbh);
-  if (ship.hp <= 0) {
-    if (!ship.destroyed) {
-      ship.destroyed = true; ship.destroyedAt = Date.now();
-      for (let i = 0; i < 60; i++) {
-        const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*5;
-        particles.push({x:canvas.width/2,y:canvas.height/2,
-          vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+  // NAVIGATION
+  sBar(y,"NAVIGATION",TEAL); y+=LINE+2;
+  kv("SPD",speed.toFixed(2),L,y); y+=LINE;
+  kv("DIR",ship.dir.replace("-"," ").toUpperCase(),L,y); y+=LINE;
+  kv("POS",Math.floor(ship.worldX)+" / "+Math.floor(ship.worldY),L,y); y+=LINE+4;
+
+  // SHIP
+  sBar(y,"SHIP  "+ship.shipType.name,TEAL); y+=LINE+2;
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("THRUST",L,y); y+=4;
+  hbar(L,y,PW-28,7,speed/BOOST_MAX,"#4FC3C3","#ff2222"); y+=16;
+  const hpPct=ship.hp/SHIP_MAX_HP;
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("HULL",L,y);
+  ctx.font=SML; ctx.fillStyle=hpPct<0.25?"#ff4444":WHT;
+  ctx.fillText(ship.hp+" / "+SHIP_MAX_HP,L+68,y); y+=4;
+  hbar(L,y,PW-28,7,hpPct,
+    hpPct>0.5?"#22bb55":hpPct>0.25?"#aa6600":"#880000",
+    hpPct>0.5?"#44ff88":hpPct>0.25?"#ffcc00":"#ff2222"); y+=16;
+  const fuelPct=ship.fuel/FUEL_CAPACITY;
+  const segW=Math.floor((PW-28)/10)-2, filledSegs=Math.ceil(fuelPct*10);
+  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("FUEL",L,y);
+  ctx.font=SML; ctx.fillStyle=fuelPct<0.25?ORANGE:WHT;
+  ctx.fillText(ship.fuel.toFixed(1)+" gal",L+68,y); y+=4;
+  for(let i=0;i<10;i++){
+    const lit=i<filledSegs;
+    ctx.fillStyle=!lit?"#0d1520":fuelPct>0.5?"#3db87a":fuelPct>0.25?"#e6c040":
+      (fuelPct<0.1&&Math.floor(Date.now()/300)%2===0)?"#ff2222":ORANGE;
+    ctx.fillRect(L+i*(segW+2),y,segW,10);
+    ctx.strokeStyle="#4FC3C318"; ctx.lineWidth=0.5;
+    ctx.strokeRect(L+i*(segW+2),y,segW,10);
+  }
+  y+=16;
+  if(ship.fuel<=0){ctx.font=SML;ctx.fillStyle="#ff4444";ctx.fillText("✕ FUEL EMPTY",L,y);y+=LINE;}
+  else if(fuelPct<0.2&&Math.floor(Date.now()/500)%2===0){ctx.font=SML;ctx.fillStyle=ORANGE;ctx.fillText("⚠ LOW FUEL",L,y);y+=LINE;}
+
+  // Hull death overlay
+  if(ship.hp<=0){
+    if(!ship.destroyed){ship.destroyed=true;ship.destroyedAt=Date.now();
+      for(let i=0;i<60;i++){const ang=Math.random()*Math.PI*2,spd=1+Math.random()*5;
+        particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
           life:80+Math.random()*60,maxLife:140,
-          color:['#ff4444','#ff8800','#ffcc00','#ffffff'][Math.floor(Math.random()*4)],
-          size:2+Math.random()*4});
-      }
+          color:["#ff4444","#ff8800","#ffcc00","#ffffff"][Math.floor(Math.random()*4)],size:2+Math.random()*4});}}
+    const elapsed=Date.now()-(ship.destroyedAt||Date.now()),remaining=Math.ceil((4000-elapsed)/1000);
+    ctx.fillStyle="#000000bb";ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign="center";
+    ctx.font="bold 32px Courier New";ctx.fillStyle="#ff2222";ctx.fillText("✕  SHIP DESTROYED",canvas.width/2,canvas.height/2-30);
+    ctx.font="20px Courier New";ctx.fillStyle="#ff8800";
+    ctx.fillText("RESPAWNING IN "+Math.max(0,remaining)+"...",canvas.width/2,canvas.height/2+14);
+    ctx.textAlign="left";
+    if(elapsed>=4000){
+      if(ship.ore>0||ship.mineral>0||ship.armalcolite>0){
+        worldPods.push({pid:"wreck_"+Date.now(),type:"_wreck",
+          worldX:ship.worldX+(Math.random()-0.5)*40,worldY:ship.worldY+(Math.random()-0.5)*40,
+          angle:Math.random()*Math.PI*2,
+          cargo:{ore:ship.ore,mineral:ship.mineral,armalcolite:ship.armalcolite},label:"WRECK"});}
+      ship.ore=0;ship.mineral=0;ship.armalcolite=0;
+      ship.hp=SHIP_MAX_HP;ship.worldX=(Math.random()-0.5)*300;ship.worldY=(Math.random()-0.5)*300;
+      ship.vx=0;ship.vy=0;ship.destroyed=false;saveGame();
+      showToast("RESPAWNED — cargo lost. Find your wreck.","#f97316");
     }
-    const elapsed = Date.now() - (ship.destroyedAt||Date.now());
-    const remaining = Math.ceil((4000-elapsed)/1000);
-    ctx.fillStyle='#000000bb'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.textAlign='center';
-    ctx.font='bold 32px Courier New'; ctx.fillStyle='#ff2222';
-    ctx.fillText('\u2715  SHIP DESTROYED',canvas.width/2,canvas.height/2-30);
-    ctx.font='20px Courier New'; ctx.fillStyle='#ff8800';
-    ctx.fillText('RESPAWNING IN '+Math.max(0,remaining)+'...',canvas.width/2,canvas.height/2+14);
-    ctx.textAlign='left';
-    if (elapsed >= 4000) {
-        // ── Spawn a wreck pod at the death location before wiping cargo ──
-        if (ship.ore > 0 || ship.mineral > 0 || ship.armalcolite > 0) {
-          worldPods.push({
-            pid:     'wreck_' + Date.now(),
-            type:    '_wreck',
-            worldX:  ship.worldX + (Math.random()-0.5)*40,
-            worldY:  ship.worldY + (Math.random()-0.5)*40,
-            angle:   Math.random() * Math.PI * 2,
-            cargo:   { ore: ship.ore, mineral: ship.mineral, armalcolite: ship.armalcolite },
-            label:   'WRECK',
-          });
-        }
-        // ── Wipe cargo on respawn ──
-        ship.ore = 0; ship.mineral = 0; ship.armalcolite = 0;
-        ship.hp = SHIP_MAX_HP;
-        ship.worldX = (Math.random()-0.5)*300;
-        ship.worldY = (Math.random()-0.5)*300;
-        ship.vx = 0; ship.vy = 0;
-        ship.destroyed = false;
-        saveGame();
-        showToast('RESPAWNED — cargo lost. Find your wreck to recover it.', '#f97316');
-      }
+    return;
   }
 
-  // FUEL segments
-  const fx = LEFT, fy = fuelY;
-  const segCount = 10, segW = Math.floor((PW - 68) / 10) - 2, segH = 24, segGap = 3;
-  const fuelPct = ship.fuel / FUEL_CAPACITY;
-  const filledSegs = Math.ceil(fuelPct * segCount);
-  ctx.font = HUD_FONT_SM; ctx.fillStyle = HUD_DIM;
-  ctx.fillText('FUEL', fx, fy - 5);
-  for (let i = 0; i < segCount; i++) {
-    const lit = i < filledSegs;
-    let fill = !lit ? '#0d1520'
-      : fuelPct > 0.5  ? '#3db87a'
-      : fuelPct > 0.25 ? '#e6c040'
-      : (fuelPct < 0.1 && Math.floor(Date.now()/300)%2===0) ? '#ff2222' : '#D9541E';
-    ctx.fillStyle = fill;
-    ctx.fillRect(fx + i*(segW+segGap), fy, segW, segH);
-    ctx.strokeStyle = '#4FC3C318'; ctx.lineWidth = 0.5;
-    ctx.strokeRect(fx + i*(segW+segGap), fy, segW, segH);
-  }
-  ctx.fillStyle = fuelPct < 0.25 ? '#D9541E' : HUD_COLOR;
-  ctx.font = HUD_FONT_SM;
-  ctx.fillText(ship.fuel.toFixed(1) + ' GAL  \u00b7  ' + ship.mpg + ' MPG', fx, fy + segH + 14);
-  if (ship.fuel <= 0) {
-    ctx.fillStyle = '#ff4444';
-    ctx.fillText('\u2715 FUEL EMPTY \u2014 COASTING', fx, fy + segH + 27);
-  } else if (fuelPct < 0.2 && Math.floor(Date.now()/500)%2===0) {
-    ctx.fillStyle = '#D9541E';
-    ctx.fillText('\u26a0 LOW FUEL', fx, fy + segH + 27);
+  // CARGO
+  sBar(y,"CARGO","#f59e0b"); y+=LINE+2;
+  const cUsed=cargoUsed(),cMax=ship.shipType.cargoLimit||CARGO_LIMIT;
+  const cPct=Math.min(cUsed/cMax,1),cFull=cUsed>=cMax;
+  hbar(L,y,PW-60,6,cPct,
+    cPct<0.7?"#4FC3C3":cPct<0.95?ORANGE:"#ff2222",
+    cPct<0.7?"#22aacc":cPct<0.95?"#ffaa44":"#ff6666");
+  ctx.font=SML; ctx.fillStyle=cFull?"#ef4444":WHT;
+  ctx.fillText(cUsed+" / "+cMax+(cFull?"  FULL":""),L+(PW-54),y+6); y+=14;
+  if(ship.ore>0){ctx.font="bold 14px monospace";ctx.fillStyle="#FFD700";ctx.fillText("◆",L+4,y);ctx.font=MED;ctx.fillStyle="#FFD700";ctx.fillText(ship.ore+"  NEBULITE",L+18,y);y+=LINE;}
+  if(ship.mineral>0){ctx.font="bold 14px monospace";ctx.fillStyle="#a78bfa";ctx.fillText("♦",L+4,y);ctx.font=MED;ctx.fillStyle="#c4b5fd";ctx.fillText(ship.mineral+"  MINERAL",L+18,y);y+=LINE;}
+  if(ship.armalcolite>0){ctx.font="bold 14px monospace";ctx.fillStyle="#34d399";ctx.fillText("◈",L+4,y);ctx.font=MED;ctx.fillStyle="#6ee7b7";ctx.fillText(ship.armalcolite+"  ARMALCOLITE",L+18,y);y+=LINE;}
+  if(cUsed===0){ctx.font=SML;ctx.fillStyle=DIM;ctx.fillText("empty hold",L+4,y);y+=LINE;}
+
+  // MODULES
+  if(attachedPods.length){
+    sBar(y,"MODULES","#38bdf8"); y+=LINE+2;
+    attachedPods.forEach(p=>{
+      ctx.font="bold 13px monospace";ctx.fillStyle=p.color||"#38bdf8";ctx.fillText("⦿",L+4,y);
+      ctx.font=SML;ctx.fillStyle=p.color||"#38bdf8";ctx.fillText(p.label,L+18,y);
+      if(p.cargoBonus){ctx.fillStyle=DIM;ctx.fillText("+"+p.cargoBonus+" cargo",L+120,y);}
+      y+=LINE;
+    });
   }
 
-  // CARGO — ship name + bar + resource rows (only show rows with qty > 0)
-  ctx.font = 'bold 18px Courier New'; ctx.fillStyle = '#4FC3C3';
-  ctx.fillText('⚡ ' + ship.shipType.name, LEFT, oreY - 2);
+  // ACTIONS
+  sBar(y,"ACTIONS","#64748b"); y+=LINE+2;
+  const canCraft=ship.armalcolite>0;
+  ctx.font=SML;
+  ctx.fillStyle=canCraft?"#FFD700":DIM; ctx.fillText("[C]",L,y);
+  ctx.fillStyle=canCraft?WHT:DIM; ctx.fillText("REFINE  1 ARM → +"+FUEL_PER_CRAFT.toFixed(1)+" FUEL",L+26,y); y+=LINE;
+  ctx.fillStyle=mineTarget?TEAL:DIM; ctx.fillText("[E]",L,y);
+  ctx.fillStyle=mineTarget?WHT:DIM;
+  ctx.fillText("MINE"+(mineTarget?"  "+Math.round(mineDist)+"px":""),L+26,y); y+=LINE;
 
-  const cUsed = cargoUsed(), cMax = ship.shipType.cargoLimit || CARGO_LIMIT, cbw = PW - 68;
-  const cPct  = Math.min(cUsed / cMax, 1);
-  const cFull = cUsed >= cMax;
-  ctx.font = HUD_FONT_SM;
-  ctx.fillStyle = cFull ? '#ef4444' : HUD_DIM;
-  ctx.fillText('CARGO  ' + cUsed + '/' + cMax + (cFull ? '  ■ FULL' : ''), LEFT, oreY + 16);
-  ctx.fillStyle = '#0d1520'; ctx.fillRect(LEFT-1, oreY+19, cbw+2, 5);
-  const cGrad = ctx.createLinearGradient(LEFT, 0, LEFT+cbw, 0);
-  if (cPct < 0.7)       { cGrad.addColorStop(0,'#4FC3C3'); cGrad.addColorStop(1,'#22aacc'); }
-  else if (cPct < 0.95) { cGrad.addColorStop(0,'#D9541E'); cGrad.addColorStop(1,'#ffaa44'); }
-  else                  { cGrad.addColorStop(0,'#ff2222'); cGrad.addColorStop(1,'#ff6666'); }
-  ctx.fillStyle = cGrad; ctx.fillRect(LEFT, oreY+20, cbw * cPct, 3);
-  ctx.strokeStyle = '#ffffff18'; ctx.strokeRect(LEFT, oreY+20, cbw, 3);
-
-  // Resource rows — only draw if qty > 0
-  let resRowY = oreY + 42;
-  const RES_LH = 28;
-  if (ship.ore > 0) {
-    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#FFD700';
-    ctx.fillText('◆', LEFT + 14, resRowY);
-    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#FFD700';
-    ctx.fillText(ship.ore + ' NEBULITE', LEFT + 32, resRowY);
-    resRowY += RES_LH;
-  }
-  if (ship.mineral > 0) {
-    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#a78bfa';
-    ctx.fillText('♦', LEFT + 14, resRowY);
-    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#c4b5fd';
-    ctx.fillText(ship.mineral + ' MINERAL MAT', LEFT + 32, resRowY);
-    resRowY += RES_LH;
-  }
-  if (ship.armalcolite > 0) {
-    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#34d399';
-    ctx.fillText('◈', LEFT + 14, resRowY);
-    ctx.font = HUD_FONT_SM;    ctx.fillStyle = '#6ee7b7';
-    ctx.fillText(ship.armalcolite + ' ARMALCOLITE', LEFT + 32, resRowY);
-    resRowY += RES_LH;
+  // NETWORK
+  if(typeof multiMode!=="undefined"&&multiMode){
+    sBar(y,"NETWORK","#38bdf8"); y+=LINE+2;
+    ctx.font=SML; ctx.fillStyle="#38bdf8";
+    ctx.fillText("■  "+(Object.keys(remotePlayers).length+1)+" pilots online",L,y); y+=LINE;
   }
 
-  // PILOTS ONLINE
-    if (typeof multiMode !== 'undefined' && multiMode) {
-    ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#38bdf8';
-    ctx.fillText('■', LEFT + 14, resRowY);
-    ctx.font = HUD_FONT_SM; ctx.fillStyle = '#38bdf8';
-    ctx.fillText((Object.keys(remotePlayers).length + 1) + ' PILOTS ONLINE', LEFT + 32, resRowY);
-    resRowY += 28;
+  // Mini compass
+  const cx2=10+PW-36,cy2=58,r=22;
+  ctx.strokeStyle="#1a2a3a"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(cx2,cy2,r,0,Math.PI*2); ctx.stroke();
+  const dirIdx=DIRS.indexOf(ship.dir);
+  if(dirIdx>=0){
+    const a=DIR_ANGLES_DEG[dirIdx]*(Math.PI/180);
+    ctx.strokeStyle=TEAL; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(cx2,cy2);
+    ctx.lineTo(cx2+Math.cos(a)*(r-4),cy2+Math.sin(a)*(r-4)); ctx.stroke();
+    ctx.fillStyle=TEAL;
+    ctx.beginPath(); ctx.arc(cx2+Math.cos(a)*(r-4),cy2+Math.sin(a)*(r-4),3,0,Math.PI*2); ctx.fill();
   }
+  ctx.fillStyle="#1a2a3a88"; ctx.beginPath(); ctx.arc(cx2,cy2,3,0,Math.PI*2); ctx.fill();
 
-    // ACTION HINTS — sit below dynamic resource rows
-  resRowY += 6;
-  const canCraft = ship.armalcolite > 0;
-  ctx.font = HUD_FONT_SM;
-  ctx.fillStyle = canCraft ? '#FFD700' : '#3a3010';
-  ctx.fillText('[C] REFINE', LEFT, resRowY);
-  ctx.fillStyle = canCraft ? HUD_COLOR : '#2a3040';
-  ctx.fillText('1 ARMALCOLITE → +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', LEFT + 84, resRowY);
-
-  ctx.fillStyle = mineTarget ? '#4FC3C3' : '#2a3a4a';
-  ctx.fillText('[E] MINE', LEFT, resRowY + LH);
-  if (mineTarget) {
-    ctx.fillStyle = '#4FC3C380';
-    ctx.fillText(Math.round(mineDist) + 'px', LEFT + 72, resRowY + LH);
-  }
-
-  // MINI COMPASS
-  const cx2 = canvas.width - 52, cy2 = 124, r = 26;
-  ctx.strokeStyle = '#1a2a3a'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI*2); ctx.stroke();
-  const dirIdx = DIRS.indexOf(ship.dir);
-  if (dirIdx >= 0) {
-    const a = DIR_ANGLES_DEG[dirIdx] * (Math.PI / 180);
-    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(cx2, cy2);
-    ctx.lineTo(cx2 + Math.cos(a)*(r-4), cy2 + Math.sin(a)*(r-4)); ctx.stroke();
-    ctx.fillStyle = '#4FC3C3';
-    ctx.beginPath(); ctx.arc(cx2+Math.cos(a)*(r-4), cy2+Math.sin(a)*(r-4), 3, 0, Math.PI*2); ctx.fill();
-  }
-  ctx.fillStyle = '#1a2a3a88';
-  ctx.beginPath(); ctx.arc(cx2, cy2, 3, 0, Math.PI*2); ctx.fill();
-
-  // MAP FLASH
-  if (bgFlash && bgFlash.timer > 0) {
-    const alpha = Math.min(1, bgFlash.timer / 30);
-    ctx.globalAlpha = alpha; ctx.fillStyle = '#4FC3C3';
-    ctx.font = HUD_FONT; ctx.textAlign = 'center';
-    ctx.fillText('MAP: ' + bgFlash.name.replace('_',' ').toUpperCase(), canvas.width/2, canvas.height - 30);
-    ctx.textAlign = 'left'; ctx.globalAlpha = 1;
-    bgFlash.timer--;
+  // Map zone flash
+  if(bgFlash&&bgFlash.timer>0){
+    const alpha=Math.min(1,bgFlash.timer/30);
+    ctx.globalAlpha=alpha; ctx.fillStyle=TEAL;
+    ctx.font="18px Courier New"; ctx.textAlign="center";
+    ctx.fillText("MAP: "+bgFlash.name.replace("_"," ").toUpperCase(),canvas.width/2,canvas.height-30);
+    ctx.textAlign="left"; ctx.globalAlpha=1; bgFlash.timer--;
   }
 }
 
