@@ -1524,25 +1524,32 @@ function drawAttachedPods(cx, cy) {
       const dist  = 42 + idx * 36;
       const ratio = dist / 38;
       const px = cx + off.ox * ratio;
-      const py = cy + off.oy * ratio;
+      const py = cy + off.oy * ratio + Math.sin(t*1.8+idx*1.2)*2;
       ctx.save();
+      // dashed tether line
       ctx.strokeStyle = "#38bdf866"; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,4]);
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.translate(px, py + Math.sin(t*1.8+idx*1.2)*2);
-      ctx.shadowColor = pod.color || "#38bdf8"; ctx.shadowBlur = 10;
-      const podFrame = podRotations["south"];
-      if (podFrame) {
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(podFrame, -22, -22, 44, 44);
-      } else {
-        ctx.fillStyle = (pod.color||"#38bdf8")+"cc";
-        ctx.beginPath();
-        for(let k=0;k<6;k++){const a=(k/6)*Math.PI*2-Math.PI/6;
-          k===0?ctx.moveTo(Math.cos(a)*14,Math.sin(a)*14):ctx.lineTo(Math.cos(a)*14,Math.sin(a)*14);}
-        ctx.closePath(); ctx.fill();
+      // draw pod as a glowing hexagon (NOT a ship sprite)
+      const col = pod.color||"#38bdf8";
+      const pulse = 0.7 + 0.3*Math.sin(t*2.4+idx*1.5);
+      ctx.shadowColor = col; ctx.shadowBlur = 12*pulse;
+      ctx.fillStyle = col+"44";
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for(let k=0;k<6;k++){
+        const a=(k/6)*Math.PI*2 - Math.PI/6;
+        const r=12;
+        k===0?ctx.moveTo(px+Math.cos(a)*r,py+Math.sin(a)*r)
+             :ctx.lineTo(px+Math.cos(a)*r,py+Math.sin(a)*r);
       }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      // inner bright core dot
+      ctx.shadowColor=col; ctx.shadowBlur=8;
+      ctx.fillStyle=col+"cc";
+      ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
       ctx.shadowBlur=0; ctx.restore();
     });
   }
@@ -1830,7 +1837,16 @@ function drawHUD(speed) {
   const resCount=(ship.ore>0?1:0)+(ship.mineral>0?1:0)+(ship.armalcolite>0?1:0);
   const modRows =attachedPods.length;
   const netRow  =(typeof multiMode!=="undefined"&&multiMode)?1:0;
-  const panelH  =312+resCount*LINE+(modRows?(LINE*(modRows+1)):0)+(netRow?LINE*2:0);
+  const fuelWarning=(ship.fuel<=0||ship.fuel/FUEL_CAPACITY<0.2)?1:0;
+  const emptyHold=(cargoUsed()===0)?1:0;
+  // base: nav(24+66+26) + ship_sbar(24) + thrust(20) + hull(20) + fuel(20) + cargo_sbar(24) + cargo_bar(14) + actions_sbar(24) + actions_rows(44) + padding(34)
+  const BASE_H = 24+66+26 + 24+20+20+20 + 24+14 + 24+44 + 34;
+  const panelH = BASE_H
+    + fuelWarning*LINE
+    + resCount*LINE
+    + emptyHold*LINE
+    + (modRows?(LINE+2+modRows*LINE):0)
+    + (netRow?(LINE+2+LINE):0);
 
   ctx.fillStyle="#000000e0"; ctx.fillRect(10,10,PW,panelH);
   ctx.strokeStyle=TEAL+"30"; ctx.lineWidth=1; ctx.strokeRect(10,10,PW,panelH);
