@@ -4,7 +4,7 @@ cd /d "C:\Users\diepowel\Documents\DRIFTBOUND"
 echo.
 echo  ===================================
 echo   DRIFTBOUND - Game Server
-echo   http://localhost:8420/driftbound_flight_test.html
+echo   http://localhost:8420/index.html
 echo  ===================================
 echo.
 echo  Open the link above in your browser.
