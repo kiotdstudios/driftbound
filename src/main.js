@@ -419,7 +419,8 @@ function loadBgSet(name) {
 // ═══════════════════════════════════════════════════════════════════════════
 // _bgImgs[0]=base,[1]=L1_far,[2]=L2_mid,[3]=L3_near,[4]=L4_atmo,[5]=L5_vapor
 const _bgImgs = [null, null, null, null, null, null];
-const _BG_PAR = [0, 0.04, 0.13, 0.28, 0.42, 0.60];
+// Per-layer alpha. MUST stay index-aligned with _bgImgs and NEB_LAYERS
+// (a length/index mismatch is what historically fed drawBG an undefined layer).
 const _BG_ALP = [1.0, 0.55, 0.65, 0.75, 0.80, 0.70];
 
 function _initBG() {
@@ -547,6 +548,7 @@ function showToast(msg) { toastMsg = msg; toastTimer = 150; }
 
 let debugMode    = false;       // F1 toggles debug overlay
 let diagMode     = false;       // F2 toggles dev diagnostics overlay
+let devControls  = true;        // F3 toggles the DEV CONTROLS legend (DEV_MODE only)
 let _hudBounds   = null;        // DEV/test: when array, drawHUD records per-row {y0,y1} bounds
 
 // DEV_MODE — enables in-flight cheat shortcuts for rapid testing.
@@ -758,6 +760,7 @@ window.addEventListener('keydown', e => {
 
   if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
   if (e.code === 'F2') { e.preventDefault(); diagMode  = !diagMode; }
+  if (e.code === 'F3') { e.preventDefault(); devControls = !devControls; }
 
   // Camera zoom: '-' out, '+'/'=' in, '0' reset to default (0.85x). World only.
   if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
@@ -1519,8 +1522,12 @@ function drawWorldPods(cx, cy) {
     const inRange = dist < POD_ATTACH_RANGE;
     const col     = podType.color || '#38bdf8';
 
-    // Slow float bob
-    const bob = Math.sin(t * 0.9 + pod.worldX * 0.003) * 3;
+    // Slow float bob + lateral zero-G drift + orientation drift (VISUAL ONLY;
+    // pod.angle is untouched so docking/collision logic stays authoritative)
+    const bob     = Math.sin(t * 0.9 + pod.worldX * 0.003) * 3;
+    const drift   = Math.cos(t * 0.4 + pod.worldY * 0.0025) * 2.5;
+    const rotDrift= Math.sin(t * 0.33 + pod.worldX * 0.002) * 0.06;
+    const sbx = sx + drift;
     const sby = sy + bob;
 
     // ── Outer beacon ring ──
@@ -1536,7 +1543,8 @@ function drawWorldPods(cx, cy) {
 
     // ── Draw modular pod sprite (procedural octagon fallback until art loads) ──
     ctx.save();
-    ctx.translate(sx, sby);
+    ctx.translate(sbx, sby);
+    ctx.rotate(rotDrift);
 
     // Glow halo behind the sprite
     const glowR = inRange ? 40 + pulse * 10 : 26;
@@ -1835,7 +1843,11 @@ function drawBG(camX, camY) {
   }
 
   // FLAT base — completely static (no drift)
-  for (let i = 0; i < 6; i++) {
+  // Bound the loop by the SMALLEST of the three index-aligned arrays so
+  // _drawNebulaLayer can never receive an index without a matching NEB_LAYERS
+  // descriptor or alpha (root fix for 'lyr is undefined'; not optional chaining).
+  const _nLayers = Math.min(_bgImgs.length, NEB_LAYERS.length, _BG_ALP.length);
+  for (let i = 0; i < _nLayers; i++) {
     _drawNebulaLayer(_bgImgs[i], i, _BG_ALP[i]);
   }
 
@@ -2359,6 +2371,79 @@ function updateInteriorPlayer() {
   if (onDoor && podSecured && eEdge) {
     interiorFadeDir = -1; eEdge = false;
   }
+}
+
+// ─── DEV CONTROLS PANEL ─────────────────────────────────────────────────────
+// Toggleable (F3) reference panel, DEV_MODE only, so temporary test shortcuts
+// never have to be memorised. Dev cheats are read live from DEV_COMMANDS, so
+// any newly-added test key shows up here automatically. Kept out of production
+// (renders only while DEV_MODE is true). Screen-space; self-contained transform.
+function drawDevControls() {
+  if (typeof DEV_MODE === 'undefined' || !DEV_MODE || !devControls) return;
+
+  const cheatLines = Object.values(DEV_COMMANDS).map(c => {
+    const p = String(c.label).split('\u2014');           // labels are 'K — Desc'
+    return '[' + p[0].trim() + ']  ' + (p[1] || '').trim();
+  });
+
+  const lines = [
+    { s: 'MOVEMENT' },
+    '[Arrows]  Thrust',
+    '[Shift]  Boost',
+    '[X]  Brake',
+    '[E]  Interact / Mine',
+    { s: 'VIEW' },
+    '[- / =]  Zoom',
+    '[0]  Reset Zoom',
+    '[M]  Map',
+    '[F1] Debug   [F2] Diagnostics',
+    { s: 'DEV CHEATS' },
+    ...cheatLines,
+    { s: 'MISC' },
+    '[ [ ] ]  Cycle BG',
+    '[Delete]  Reset Save',
+  ];
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+
+  const PAD = 10, LH = 15, HEADH = 24, FONT = '11px "Courier New", monospace';
+  ctx.font = FONT;
+  let maxw = ctx.measureText('DEV CONTROLS  [F3]').width;
+  for (const l of lines) {
+    const txt = (typeof l === 'string') ? l : l.s;
+    maxw = Math.max(maxw, ctx.measureText(txt).width);
+  }
+  const w = Math.ceil(maxw) + PAD * 2;
+  const h = HEADH + lines.length * LH + PAD;
+  const x = canvas.width - w - 12;
+  const y = 12;
+
+  ctx.fillStyle = 'rgba(6,12,20,0.84)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#294055';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+
+  ctx.fillStyle = '#a78bfa';
+  ctx.fillText('DEV CONTROLS  [F3]', x + PAD, y + 15);
+
+  let ly = y + HEADH + 11;
+  for (const l of lines) {
+    if (typeof l !== 'string') {
+      ctx.fillStyle = '#4FC3C3';
+      ctx.fillText(l.s, x + PAD, ly);
+    } else {
+      ctx.fillStyle = '#c3d4e0';
+      ctx.fillText(l, x + PAD, ly);
+    }
+    ly += LH;
+  }
+  ctx.restore();
 }
 
 function drawHUD(speed) {
@@ -3461,7 +3546,7 @@ function drawDebug(speed) {
 
 function update() {
 
-  const braking  = keys['Space'];
+  const braking  = keys['KeyX'];   // brake (was Space; Space reserved for future gameplay)
 
   // Smooth boost ramp: 0=cruise, 1=full boost
 
@@ -3811,6 +3896,7 @@ function loop(now) {
 
   drawHUD(speed);
   drawMinimap();
+  drawDevControls();
 
   // ── INTERIOR FADE-IN OVERLAY (flight path only) ──
   // The fade machine and interior render live at the top of loop(); here we only
@@ -3945,6 +4031,12 @@ function runHealthCheck() {
   // Pod type definitions
   if (!POD_TYPES || Object.keys(POD_TYPES).length === 0)
     issues.push({ level:'ERROR', msg:'POD_TYPES empty or missing' });
+
+  // Parallax layer arrays MUST be index-aligned; a mismatch would hand drawBG
+  // an undefined layer object (the 'lyr is undefined' runtime crash).
+  if (NEB_LAYERS.length !== _bgImgs.length || _BG_ALP.length !== _bgImgs.length)
+    issues.push({ level:'CRITICAL', msg:'Parallax layer arrays misaligned',
+      ctx:{ neb: NEB_LAYERS.length, img: _bgImgs.length, alp: _BG_ALP.length } });
 
   // World asteroids
   try {
@@ -4499,4 +4591,5 @@ window.__DB = {
   get eEdge(){ return eEdge; },
   get toastMsg(){ return toastMsg; },
   get DevLog(){ return DevLog; },
+  get devControls(){ return devControls; },
 };
