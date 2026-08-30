@@ -663,6 +663,7 @@ function showToast(msg) { toastMsg = msg; toastTimer = 150; }
 // ─── DEBUG SYSTEM ────────────────────────────────────────────────────────────
 
 let debugMode    = false;       // F1 toggles debug overlay
+let diagMode     = false;       // F2 toggles dev diagnostics overlay
 
 let frameCount   = 0;
 
@@ -729,6 +730,7 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
 
   if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
+  if (e.code === 'F2') { e.preventDefault(); diagMode  = !diagMode; }
 
   // Record for debugger
 
@@ -2711,6 +2713,97 @@ function drawRegionalMap() {
 }
 
 
+// ─── DEV DIAGNOSTICS OVERLAY (F2) ─────────────────────────────────────────────
+// Dev-only. Never shown in player mode. Toggle with F2.
+function drawDiagnostics() {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+  const SAVE_VER  = 'driftbound_save_v1';
+  const BUILD_VER = 'alpha_v0.2';
+
+  const PAD  = 12;
+  const LH   = 16;
+  const PW   = 320;
+  const COL  = '#00ff88';
+  const WARN = '#ffaa00';
+  const ERR  = '#ff4444';
+  const DIM  = '#2a4a3a';
+  const BG   = 'rgba(0,8,4,0.90)';
+
+  // Count DevLog errors/warnings
+  const errCount  = typeof DevLog !== 'undefined' ? DevLog.errorCount : 0;
+  const warnCount = typeof DevLog !== 'undefined'
+    ? DevLog.entries.filter(e=>e.level==='WARNING').length : 0;
+  const failedAssets = typeof DevLog !== 'undefined'
+    ? DevLog.entries.filter(e=>e.message && e.message.includes('ASSET LOAD FAILED')).length : 0;
+
+  // Rows to display
+  const rows = [
+    { label:'BUILD',        val: BUILD_VER,                           col: COL },
+    { label:'SAVE KEY',     val: SAVE_VER,                            col: DIM },
+    { label:'FPS',          val: fpsDisplay,
+      col: fpsDisplay < 30 ? ERR : fpsDisplay < 50 ? WARN : COL },
+    { label:'PLAYER POS',   val: Math.floor(ship.worldX)+' / '+Math.floor(ship.worldY), col: COL },
+    { label:'SHIP DIR',     val: ship.dir.toUpperCase(),              col: COL },
+    { label:'SCENE',        val: mapMode ? 'REGIONAL MAP' : 'FLIGHT', col: COL },
+    { label:'ASSETS TOTAL', val: totalAssets,                         col: COL },
+    { label:'ASSETS LOADED',val: loadedAssets,                        col: loadedAssets === totalAssets ? COL : WARN },
+    { label:'ASSETS FAILED',val: failedAssets,                        col: failedAssets > 0 ? ERR : COL },
+    { label:'LOG ERRORS',   val: errCount,                            col: errCount  > 0 ? ERR  : COL },
+    { label:'LOG WARNINGS', val: warnCount,                           col: warnCount > 0 ? WARN : COL },
+    { label:'FUEL',         val: ship.fuel.toFixed(2)+' / '+FUEL_CAPACITY, col: COL },
+    { label:'HULL',         val: ship.hp+' / '+SHIP_MAX_HP,          col: ship.hp < 30 ? ERR : COL },
+    { label:'ORE',          val: cargoUsed()+' / '+CARGO_LIMIT,      col: COL },
+    { label:'MAP MODE',     val: mapMode ? 'OPEN' : 'CLOSED',        col: COL },
+    { label:'INTERIOR',     val: interiorMode ? 'YES' : 'NO',        col: COL },
+  ];
+
+  const PH = rows.length * LH + PAD * 2 + 8;
+  const px = W - PW - 8, py = 8;
+
+  ctx.save();
+  ctx.fillStyle = BG;
+  roundRect(ctx, px, py, PW, PH, 4); ctx.fill();
+  ctx.strokeStyle = COL + '44'; ctx.lineWidth = 1;
+  roundRect(ctx, px, py, PW, PH, 4); ctx.stroke();
+  ctx.fillStyle = COL; ctx.fillRect(px, py, 2, PH);  // left accent
+
+  let y = py + PAD + LH - 4;
+  ctx.font = '11px "Courier New", monospace';
+
+  // Header
+  ctx.fillStyle = COL;
+  ctx.shadowColor = COL; ctx.shadowBlur = 6;
+  ctx.fillText('DEV DIAGNOSTICS — F2 to close', px + PAD + 4, y);
+  ctx.shadowBlur = 0;
+  y += LH + 2;
+
+  // Separator
+  ctx.strokeStyle = COL + '30'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(px+4, y-8); ctx.lineTo(px+PW-4, y-8); ctx.stroke();
+
+  rows.forEach(row => {
+    const labelCol = DIM, valCol = row.col || COL;
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = labelCol; ctx.fillText(row.label, px + PAD + 4, y);
+    ctx.fillStyle = valCol;
+    ctx.textAlign = 'right';
+    ctx.fillText(String(row.val), px + PW - 8, y);
+    ctx.textAlign = 'left';
+    y += LH;
+  });
+
+  // Bottom hint
+  ctx.fillStyle = DIM;
+  ctx.font = '9px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('DevLog.errors() | DevLog.recent() in console', px + PW/2, py + PH - 5);
+  ctx.textAlign = 'left';
+
+  ctx.restore();
+}
+
+
 function drawDebug(speed) {
 
   const PAD   = 14;
@@ -3245,6 +3338,7 @@ function loop(now) {
 
 
   if (debugMode) drawDebug(speed);
+  if (diagMode)  drawDiagnostics();
 
   requestAnimationFrame(loop);
 
