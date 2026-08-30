@@ -1,0 +1,45 @@
+import { chromium } from 'playwright';
+const URL = process.argv[2] || 'http://localhost:8420/index.html';
+const errors = [];
+const b = await chromium.launch({ headless: true });
+const pg = await b.newPage();
+pg.on('console', m => { if (m.type()==='error') errors.push('CONSOLE: '+m.text()); });
+pg.on('pageerror', e => errors.push('PAGEERROR: '+e.message));
+await pg.goto(URL, { waitUntil: 'domcontentloaded' });
+await pg.waitForTimeout(3000);
+const R = {};
+R.bridge = await pg.evaluate(() => !!window.__DB && !!window.__DB.ship);
+R.windowBinds = await pg.evaluate(() => typeof window.lobbyConnect==='function' && typeof window.showToast==='function');
+await pg.click('text=PLAY SOLO').catch(()=>{});
+await pg.waitForTimeout(1500);
+R.lobbyHidden = await pg.evaluate(() => { const l=document.getElementById('lobby'); return !l || l.style.display==='none'; });
+const v0 = await pg.evaluate(() => { const s=window.__DB.ship; return {x:s.worldX,y:s.worldY}; });
+await pg.keyboard.down('ArrowUp'); await pg.waitForTimeout(1200); await pg.keyboard.up('ArrowUp');
+await pg.waitForTimeout(200);
+const v1 = await pg.evaluate(() => { const s=window.__DB.ship; return {x:s.worldX,y:s.worldY}; });
+R.moved = (Math.abs(v1.x-v0.x)+Math.abs(v1.y-v0.y)) > 1;
+await pg.keyboard.down('ArrowUp'); await pg.keyboard.down('ShiftLeft'); await pg.waitForTimeout(600);
+const sp = await pg.evaluate(() => { const s=window.__DB.ship; return Math.hypot(s.vx,s.vy); });
+await pg.keyboard.up('ShiftLeft'); await pg.keyboard.up('ArrowUp');
+R.boosted = sp > 1.0;
+await pg.keyboard.press('Minus'); await pg.keyboard.press('Equal'); await pg.keyboard.press('Digit0');
+await pg.waitForTimeout(150);
+R.devlog = await pg.evaluate(() => {
+  const d = window.__DB.DevLog; if(!d||!d.entries) return {ok:true, bad:[]};
+  const bad = d.entries.filter(e => e.level==='CRITICAL'||e.level==='ERROR').map(e=> e.level+': '+(e.msg||e.message||''));
+  return { ok: bad.length===0, bad };
+});
+R.podArt = await pg.evaluate(() => {
+  const pr = window.__DB.podRotations || {};
+  const s = pr['south'];
+  return { hasSprite: !!(s && s.naturalWidth>0), rot: Object.keys(pr).length };
+});
+await pg.waitForTimeout(300);
+R.saveKey = await pg.evaluate(() => Object.keys(localStorage).some(k=>k.toLowerCase().includes('driftbound')));
+await b.close();
+console.log(JSON.stringify(R,null,2));
+console.log('CONSOLE/PAGE ERRORS:', errors.length);
+errors.forEach(e=>console.log('  '+e));
+const pass = R.bridge && R.windowBinds && R.lobbyHidden && R.moved && R.boosted && R.devlog.ok && R.podArt.hasSprite && errors.length===0;
+console.log(pass ? 'RUNTIME READY: PASS' : 'RUNTIME READY: FAIL');
+if(!pass){ if(!R.devlog.ok) console.log('devlog bad:',JSON.stringify(R.devlog.bad)); process.exit(1); }

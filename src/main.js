@@ -1,0 +1,4502 @@
+
+
+
+// ── HOISTED: toast state vars must be declared before any onclick fires ──
+let toastMsg   = '';
+let toastTimer = 0;
+document.querySelectorAll('canvas').forEach((c, i) => { if (i > 0) c.remove(); });
+
+const canvas = document.getElementById('game');
+
+const ctx    = canvas.getContext('2d');
+
+ctx.imageSmoothingEnabled = false;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEV MONITOR — persistent dev log. Never blocks the game.
+// Console API: DevLog.dump() | DevLog.errors() | DevLog.recent(n) | DevLog.clear()
+// Stored in localStorage under key 'driftbound_devlog_v1' (separate from saves)
+// ═══════════════════════════════════════════════════════════════════════════
+const DevLog = (() => {
+  const STORE_KEY  = 'driftbound_devlog_v1';
+  const MAX_ENTRIES = 300;
+  const ROTATE_TO   = 200;
+
+  let _buf = [];
+  try {
+    const stored = localStorage.getItem(STORE_KEY);
+    if (stored) { const p = JSON.parse(stored); if (Array.isArray(p)) _buf = p; }
+  } catch(e) { _buf = []; }
+
+  function _ts() {
+    const d = new Date();
+    return d.toLocaleTimeString('en-US',{hour12:false}) + '.' +
+           String(d.getMilliseconds()).padStart(3,'0');
+  }
+
+  function _flush() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(_buf)); } catch(e) { /* never block */ }
+  }
+
+  function _write(level, system, message, ctx) {
+    try {
+      // Dedup: collapse consecutive identical entries; track count+lastTs instead of flooding
+      if (_buf.length > 0) {
+        const last = _buf[_buf.length - 1];
+        if (last.system === system && last.message === message && last.level === level) {
+          last.count  = (last.count || 1) + 1;
+          last.lastTs = _ts();
+          _flush();
+          return;
+        }
+      }
+      const entry = { ts:_ts(), level, system, message };
+      if (ctx !== undefined) entry.ctx = ctx;
+      _buf.push(entry);
+      if (_buf.length >= MAX_ENTRIES) {
+        _buf = _buf.slice(_buf.length - ROTATE_TO);
+        _buf.unshift({ ts:_ts(), level:'INFO', system:'DevLog',
+          message:`[rotated — keeping newest ${ROTATE_TO} entries]` });
+      }
+      _flush();
+      if (level === 'CRITICAL' || level === 'ERROR')
+        console.error(`[DB ${level}][${system}] ${message}`, ctx||'');
+      else if (level === 'WARNING')
+        console.warn(`[DB WARNING][${system}] ${message}`, ctx||'');
+    } catch(e) { /* logging must never throw */ }
+  }
+
+  const api = {
+    info    : (s,m,c) => _write('INFO',     s, m, c),
+    warn    : (s,m,c) => _write('WARNING',  s, m, c),
+    error   : (s,m,c) => _write('ERROR',    s, m, c),
+    critical: (s,m,c) => _write('CRITICAL', s, m, c),
+
+    dump   : ()   => { console.table(_buf); return [..._buf]; },
+    errors : ()   => { const e=_buf.filter(x=>x.level==='ERROR'||x.level==='CRITICAL');
+                       console.table(e); return e; },
+    recent : (n=20) => { const r=_buf.slice(-(n||20)); console.table(r); return r; },
+    clear  : ()   => { _buf=[]; _flush(); console.log('[DevLog] cleared'); },
+    get entries()    { return [..._buf]; },
+    get errorCount() { return _buf.filter(x=>x.level==='ERROR'||x.level==='CRITICAL').length; },
+  };
+
+  window.DevLog = api;
+  return api;
+})();
+
+DevLog.info('DevLog', 'Session started', { href: location.href, ts: new Date().toISOString() });
+
+
+
+
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
+const SPRITE_SIZE   = 68;
+
+const DISPLAY_SCALE = 2;
+
+const DISPLAY_SIZE  = SPRITE_SIZE * DISPLAY_SCALE;   // 136px
+
+
+
+const NORMAL_MAX   = 0.65;  // default drift cap — slow, floaty
+
+const BOOST_MAX    = 5.28;  // shift-hold cap — burns fuel, fast
+
+const BOOST_THRUST = 0.294; // -30% accel  // higher thrust while Shift held — punchy acceleration
+
+const BOOST_RAMP_UP   = 0.011; // ramp to full boost: ~90 frames (~1.5s) — gentle engine spool
+
+const BOOST_RAMP_DOWN = 0.006; // ramp back to cruise: ~167 frames — long inertia coast
+
+const THRUST       = 0.030; // gentle accel: ~0.45s to reach cruise cap (was 0.126 / ~0.1s — too snappy vs coast-down)
+
+const FRICTION     = 0.984;
+
+const BRAKE        = 0.88;
+
+const SPEED_THRESH = 0.12;
+
+
+
+// ─── HEALTH / COLLISION ───────────────────────────────────────────────────────────
+
+const SHIP_MAX_HP      = 100;
+
+const COLLISION_BOUNCE = 0.45;
+
+const COLLISION_DAMAGE = 8;
+
+const COLLISION_IFRAMES= 60;
+// PVP constants moved below COLLISION_RADIUS
+
+const COLLISION_RADIUS = 28;
+const PVP_COLLISION_R  = COLLISION_RADIUS * 2;  // ship-to-ship hit radius
+const PVP_DAMAGE       = 6;    // hull damage per ship collision
+const PVP_IFRAMES      = 90;   // invincibility frames after pvp hit
+const PVP_BOUNCE       = 0.6;  // harder bounce than asteroid
+
+
+
+// ─── ASTEROID / MINING ──────────────────────────────────────────────────────
+
+const MINE_RANGE     = 140;    // world-px  — max range to start mining
+
+const MINE_INTERVAL  = 20;     // frames between hits
+
+const MINE_DAMAGE    = 1;      // HP per hit
+
+const ORE_PER_FUEL   = 5;      // Nebulite to craft 1 batch of fuel
+
+const FUEL_PER_CRAFT = 2.0;    // fuel gained per craft batch
+
+const AST_SCALE      = 2;      // pixel scale for asteroid sprites
+
+const AST_COUNT      = 30;     // asteroids alive in world
+
+const WORLD_SPREAD   = 4000;   // max spawn radius
+const WORLD_SIZE     = 8000;   // parallax wrap boundary (2× spawn radius)
+
+const ORE_COLLECT_R  = 50;     // auto-collect radius
+
+
+
+const ASTEROID_TYPES = [
+  // id           hp  oreMin  oreMax  sprite-px       loot              scale  → rendered px
+  { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02, scale: 2 }, // 76×64   — smaller than ship
+  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02, scale: 2 }, // native scale (reverted from 4)
+  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35, scale: 2 }, // native scale (reverted from 4)
+];
+
+// Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
+// 10 slots: 3 planet, 4 sm_brown, 3 lg_brown
+
+
+
+// ─── SHIP TYPES ─────────────────────────────────────────────────────────────
+// Each ship has a name, cargo cap, and which cargo types it accepts.
+// Future ships can restrict to one type (e.g. fuel-only freighter).
+const SHIP_TYPES = {
+  vagrant: {
+    name:       'VAGRANT',
+    cargoLimit: 50,
+    accepts:    ['ore', 'armalcolite'],   // Nebulite + Armalcolite share hold
+    desc:       'General-purpose miner. Carries 50 units of mixed mineral cargo.'
+  },
+};
+
+const SHIP_TYPE    = SHIP_TYPES.vagrant;
+const CARGO_LIMIT  = SHIP_TYPE.cargoLimit;
+
+// Rehydrate a server asteroid: attach full type object from ASTEROID_TYPES by type_id
+
+// Total cargo units used (Nebulite + Armalcolite share the hold)
+function cargoUsed() { return ship.ore + ship.armalcolite; }
+function cargoFull()  { return cargoUsed() >= CARGO_LIMIT; }
+
+function rehydrateAsteroid(a) {
+  if (a.type && a.type.w) return a;  // already has full type, nothing to do
+  const t = ASTEROID_TYPES.find(t => t.id === a.type_id);
+  if (t) a.type = t;
+  // Ensure maxHp exists
+  if (!a.maxHp && t) a.maxHp = t.hp;
+  return a;
+}
+
+const ASTEROID_POOL = [2, 0,0,0,0, 1,1,1, 2,2];  // index into ASTEROID_TYPES
+
+// In multiMode, server owns asteroid state — use this getter everywhere
+function getAsteroids() {
+  return multiMode ? Object.values(serverAsteroids) : asteroids;
+}
+function getOrePickups() {
+  return multiMode ? Object.values(serverOres) : orePickups;
+}
+
+
+
+const FRAME_COUNT   = 9;
+
+const ANIM_FPS      = 12;
+
+const ANIM_INTERVAL = 1000 / ANIM_FPS;
+
+
+
+// Fuel system — 27 MPG, 10-gal tank. Reliable but basic: Honda energy.
+
+// Burns only on active thrust; coasting is free (space physics).
+
+const FUEL_CAPACITY   = 10.0;
+
+const FUEL_MPG        = 27;
+
+const PIXELS_PER_MILE = 300;
+
+
+
+const DIRS = [
+
+  'north', 'north-east', 'east', 'south-east',
+
+  'south', 'south-west', 'west', 'north-west'
+
+];
+
+const DIR_ANGLES_DEG = [-90, -45, 0, 45, 90, 135, 180, -135];
+
+
+
+const POD_BASE = 'pod_sprites/Create_a_small_modular_spacecr/';
+
+const ANIM_KEY = '8-frame_spaceship_flying_animation._Keep_the_ship';
+
+// ─── MODULAR POD SYSTEM ───────────────────────────────────────────────────────
+const POD_SPRITE_BASE  = 'modular_space_pod/';
+const POD_ANIM_KEY     = '8-frame_spaceship_flying_animation._Keep_the_ship';
+const POD_ATTACH_RANGE = 120;   // world-px — proximity to trigger attach prompt
+const POD_ATTACH_COST  = 10;    // Nebulite ore required to claim a pod
+const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship)
+
+// Pod definitions — add more types here later
+const POD_TYPES = {
+  // Wreck pod — spawned dynamically on ship death
+  _wreck: {
+    id:         '_wreck',
+    label:      'WRECK',
+    color:      '#f97316',
+    cargoBonus: 0,
+    desc:       'Your lost cargo. Press F to recover.',
+  },
+  modular_space_pod: {
+    id:       'modular_space_pod',
+    label:    'MODULAR POD',
+    color:    '#38bdf8',
+    cargoBonus: 25,   // +25 cargo capacity when attached
+    desc:     'Expands cargo hold by 25 units.',
+  },
+};
+
+// Active world pods — spawned at boot, removed when claimed
+const worldPods = [
+  { pid: 'pod_001', type: 'modular_space_pod', worldX: 350, worldY: -200, angle: 0.4 },
+];
+
+// Player's attached pods
+const attachedPods = [];
+
+// Pod sprite cache
+const podRotations  = {};
+const podAnimations = {};
+
+const BG_BASE  = 'vapor_bg/';
+
+
+
+// All 20 available backgrounds — cycle with [ / ]
+
+const BG_SETS = [
+  'vapor_02',
+];
+
+let currentBgIdx = 0;
+
+
+
+// ─── ASSET LOADING ────────────────────────────────────────────────────────────
+
+let totalAssets  = 0;
+
+let loadedAssets = 0;
+
+const rotations  = {};
+
+const animations = {};
+
+let   bgLayers   = [];
+
+let   bgLoading  = false;
+
+
+
+function loadImg(src) {
+
+  totalAssets++;
+
+  return new Promise(resolve => {
+
+    const img = new Image();
+
+    img.onload  = () => { loadedAssets++; refreshBar(); resolve(img); };
+
+    img.onerror = () => { loadedAssets++; refreshBar(); DevLog.warn('Assets', 'ASSET LOAD FAILED: ' + src); resolve(null); };
+
+    img.src = src;
+
+  });
+
+}
+
+function refreshBar() {
+
+  const pct = (loadedAssets / totalAssets) * 100;
+
+  document.getElementById('loadbar').style.width = pct + '%';
+
+  document.getElementById('loadtext').textContent =
+
+    `LOADING ASSETS  ${loadedAssets} / ${totalAssets}`;
+
+}
+
+
+
+// Load one named background set (flat + 3 layers)
+
+function loadBgSet(name) {
+
+  bgLoading = true;
+
+  const defs = [
+
+    { file: `${name}_FLAT.png`,     speed: 0.05 },
+
+    { file: `${name}_L1_far.png`, speed: 0.20 },
+
+    { file: `${name}_L2_mid.png`, speed: 0.50 },
+
+    { file: `${name}_L3_near.png`,speed: 1.00 },
+
+
+    { file: `${name}_L4_atmo.png`,  speed: 1.60 },
+
+    { file: `${name}_L5_vapor.png`, speed: 2.40 },
+  ];
+
+  const jobs = defs.map(d =>
+
+    new Promise(resolve => {
+
+      const img = new Image();
+
+      img.onload  = () => resolve({ img, speed: d.speed });
+
+      img.onerror = () => resolve({ img: null, speed: d.speed });
+
+      img.src = `${BG_BASE}${d.file}`;
+
+    })
+
+  );
+
+  Promise.all(jobs).then(layers => {
+    // Keep bgLayers populated for legacy compatibility
+    bgLayers  = layers.sort((a, b) => a.speed - b.speed);
+    bgLoading = false;
+    bgFlash   = { name, timer: 120 };
+
+    // Also write _bgImgs[] so drawBG (which uses _bgImgs) shows the new set.
+    // defs order: [0]=FLAT, [1]=L1_far, [2]=L2_mid, [3]=L3_near — same as _bgImgs indices.
+    layers.forEach((layer, i) => {
+      // layers were sorted by speed; re-map by speed order back to index
+      // speeds: 0.05→0, 0.20→1, 0.50→2, 1.00→3
+      const idx = [0.05, 0.20, 0.50, 1.00, 1.60, 2.40].indexOf(layer.speed);
+      if (idx >= 0) _bgImgs[idx] = layer.img;
+    });
+    DevLog.info('Assets', 'Background set loaded: ' + name,
+      { loaded: layers.filter(l=>l.img).length, failed: layers.filter(l=>!l.img).length });
+  });
+
+}
+
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PARALLAX BACKGROUND — vapor_bg image layers
+// ═══════════════════════════════════════════════════════════════════════════
+// _bgImgs[0]=base,[1]=L1_far,[2]=L2_mid,[3]=L3_near,[4]=L4_atmo,[5]=L5_vapor
+const _bgImgs = [null, null, null, null, null, null];
+const _BG_PAR = [0, 0.04, 0.13, 0.28, 0.42, 0.60];
+const _BG_ALP = [1.0, 0.55, 0.65, 0.75, 0.80, 0.70];
+
+function _initBG() {
+  // No-op — bg images loaded in loadAll, drawn with parallax in drawBG
+}
+
+
+async function loadAll() {
+  // Boot is instant — all external assets load in background after game starts.
+  // Renderers check for null and draw vector fallbacks if images aren't ready yet.
+
+  function bgLoad(src, onDone) {
+    totalAssets++;
+    const img = new Image();
+    img.onload  = () => { loadedAssets++; refreshBar(); if (onDone) onDone(img); };
+    img.onerror = () => {
+      loadedAssets++; refreshBar();
+      DevLog.warn('Assets', 'Failed to load: ' + src);
+    };
+    img.src = src;
+  }
+
+  // Pod ship sprites — background load, no await
+  for (const dir of DIRS) {
+    bgLoad(`${POD_BASE}rotations/${dir}.png`,        img => { rotations[dir] = img; });
+    bgLoad(`${POD_SPRITE_BASE}rotations/${dir}.png`, img => { podRotations[dir] = img; });
+    animations[dir]    = new Array(FRAME_COUNT).fill(null);
+    podAnimations[dir] = new Array(FRAME_COUNT).fill(null);
+    for (let f = 0; f < FRAME_COUNT; f++) {
+      const ff = f, pad = String(f).padStart(3, '0');
+      bgLoad(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`,
+             img => { animations[dir][ff] = img; });
+    }
+  }
+
+  // Vapor background layers
+  // Driftbound_Blue_Parallax_6Pack
+  const _bgFiles = ["01_far_nebula","02_mid_nebula","03_near_nebula","04_deep_space_base","05_atmosphere_detail","06_foreground_vapor"];
+  _bgFiles.forEach((name, i) => {
+    bgLoad(`Driftbound_Blue_Parallax_6Pack/${name}.png`, img => { _bgImgs[i] = img; });
+  });
+
+  // Asteroid sprites — background load
+  for (const t of ASTEROID_TYPES) {
+    bgLoad('Demo_assets/asteroids/' + t.id + '.png', img => { asteroidImgs[t.id] = img; });
+  }
+
+  // Return immediately — game starts now, sprites swap in as they arrive
+}
+
+
+
+// ─── GAME STATE ───────────────────────────────────────────────────────────────
+
+const ship = {
+
+  worldX: 0, worldY: 0,
+
+  vx: 0,     vy: 0,
+
+  dir: 'north',
+
+  animFrame: 0,
+
+  animTimer: 0,
+
+  fuel: FUEL_CAPACITY,
+
+  mpg:  FUEL_MPG,
+
+  boostRamp: 0,   // 0=cruise, 1=full boost
+
+  shipType:   SHIP_TYPE,  // which ship this is
+  ore:        0,   // Nebulite ore in cargo
+  mineral:    0,   // Craftable mineral material (2% drop from brown asteroids)
+  armalcolite:0,   // Fuel ore from lg_planet — refine with C key
+
+  mineCooldown: 0, // frames until next mine hit
+
+  laserWx: null, laserWy: null, laserTimer: 0, // visual laser
+
+  hp:       100,   // hull integrity
+
+  iframes:  0,     // invinc
+  pvpIframes: 0,   // invincibility after pvp collisionibility frames after collision
+
+  hitFlash: 0,     // red screen flash
+
+};
+
+
+
+const particles = [];
+
+const keys      = {};
+
+let   bgFlash   = null;   // { name, timer } — show map name briefly after switch
+let   mapMode   = false;  // true while regional map overlay is open (M key)
+
+
+
+// ─── ASTEROID STATE ─────────────────────────────────────────────────────────
+
+const asteroidImgs = {};
+
+const asteroids    = [];
+
+const orePickups   = [];
+
+const toRespawn    = [];  // { timer } queue for delayed respawns
+
+let   mineTarget   = null;
+
+let   mineDist     = Infinity;
+
+
+
+let craftCooldown = 0;
+
+function showToast(msg) { toastMsg = msg; toastTimer = 150; }
+
+
+
+// ─── DEBUG SYSTEM ────────────────────────────────────────────────────────────
+
+let debugMode    = false;       // F1 toggles debug overlay
+let diagMode     = false;       // F2 toggles dev diagnostics overlay
+let _hudBounds   = null;        // DEV/test: when array, drawHUD records per-row {y0,y1} bounds
+
+// DEV_MODE — enables in-flight cheat shortcuts for rapid testing.
+// Set to false before any public build.
+const DEV_MODE = true;
+
+// ─── DEV COMMANDS ─────────────────────────────────────────────────────────────
+// All developer shortcuts live here — one definition per command.
+// Execution function fires only when DEV_MODE is true and no text input has focus.
+// Keys: Slash=FullFuel, KeyH=FullHull, KeyO=FullOxygen(stub),
+//       KeyR=TestResources, KeyP=SpawnTestPod
+const DEV_COMMANDS = {
+  Slash: {
+    key: 'Slash', label: '/ — Full Fuel',
+    exec() {
+      ship.fuel = FUEL_CAPACITY;
+      showToast('DEV: FUEL RESTORED', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Fuel restored to maximum');
+    },
+  },
+  KeyH: {
+    key: 'KeyH', label: 'H — Full Hull',
+    exec() {
+      ship.hp = SHIP_MAX_HP;
+      showToast('DEV: HULL RESTORED', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Hull restored to maximum');
+    },
+  },
+  KeyO: {
+    key: 'KeyO', label: 'O — Full Oxygen (stub)',
+    exec() {
+      // Oxygen system not yet implemented — placeholder so the key is reserved
+      showToast('DEV: OXYGEN — system not yet implemented', '#ffaa00');
+      DevLog.info('DevCheat', 'DEV CHEAT: Oxygen stub triggered (no-op)');
+    },
+  },
+  KeyR: {
+    key: 'KeyR', label: 'R — Give Test Resources',
+    exec() {
+      ship.ore          += 25;
+      ship.mineral      += 10;
+      ship.armalcolite  += 5;
+      showToast('DEV: +25 Nebulite  +10 Mineral  +5 Armalcolite', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Test resources granted');
+    },
+  },
+  KeyP: {
+    key: 'KeyP', label: 'P — Spawn Test Pod',
+    exec() {
+      const pid = 'dev_pod_' + Date.now();
+      worldPods.push({
+        worldX: ship.worldX + 220,
+        worldY: ship.worldY +  80,
+        type:   'modular_space_pod',
+        pid,
+      });
+      showToast('DEV: Test pod spawned (220px ahead-right)', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Test pod spawned', { pid });
+    },
+  },
+};
+
+let frameCount   = 0;
+
+let fpsCounter   = 0;
+
+let fpsDisplay   = 0;
+
+let fpsTimer     = 0;
+
+let mouseX       = 0;
+
+let mouseY       = 0;
+
+let mouseDX      = 0;
+
+let mouseDY      = 0;
+
+const INPUT_LOG_MAX = 30;       // keep last 30 input events
+
+const inputLog   = [];          // [{t, type, code}]
+
+let   nebTime  = 0;         // autonomous nebula animation clock
+
+// ─── CAMERA STATE ────────────────────────────────────────────────────────────
+// camLead: smooth lead offset toward velocity — gives a "looking ahead" feel
+// camShake: impulse decay from impacts/boost — settles quickly
+let camLeadX = 0, camLeadY = 0;
+let camShakeX = 0, camShakeY = 0;
+let _prevBoosting = false;  // edge-detect for boost-start flare
+
+// CAMERA ZOOM: world-only zoom. HUD/minimap/map/diag/notifications NEVER scaled.
+// Scales around screen center (not ship) so smooth camera lead is preserved.
+const ZOOM_LEVELS  = [0.70, 0.85, 1.00, 1.15, 1.30];
+let   camZoomIdx    = 1;               // default = 0.85x
+let   camZoom       = ZOOM_LEVELS[1];  // current eased value
+let   camZoomTarget = ZOOM_LEVELS[1];  // target level
+const ZOOM_LERP     = 0.14;            // easing speed toward target
+let   _hudLeakLogged = false;          // one-shot guard for HUD transform-leak assert
+
+function addCamShake(amt) {
+  camShakeX += (Math.random() - 0.5) * amt * 2;
+  camShakeY += (Math.random() - 0.5) * amt * 2;
+}
+
+// Mouse-wheel zoom (world only). Ignores wheel over menu text inputs.
+window.addEventListener('wheel', e => {
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.deltaY < 0)      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); // up = zoom in
+  else if (e.deltaY > 0) camZoomIdx = Math.max(0, camZoomIdx - 1);                       // down = zoom out
+}, { passive: true });
+
+// ─── AMBIENT DEBRIS ───────────────────────────────────────────────────────────
+// Small tumbling rock fragments drifting across the sector — no collision.
+// Reinforce the sense of a lived-in, broken-down region of space.
+const _debris = [];
+const DEBRIS_COUNT = 22;
+
+function initDebris() {
+  _debris.length = 0;
+  for (let i = 0; i < DEBRIS_COUNT; i++) {
+    _debris.push({
+      wx:    (Math.random() - 0.5) * 3600,
+      wy:    (Math.random() - 0.5) * 3600,
+      vx:    (Math.random() - 0.5) * 0.14,
+      vy:    (Math.random() - 0.5) * 0.14,
+      angle: Math.random() * Math.PI * 2,
+      rotSpd:(Math.random() - 0.5) * 0.009,
+      size:  2 + Math.random() * 5,
+      alpha: 0.12 + Math.random() * 0.22,
+    });
+  }
+}
+
+function tickDebris() {
+  for (const d of _debris) {
+    d.wx += d.vx; d.wy += d.vy; d.angle += d.rotSpd;
+    if (d.wx >  1800) d.wx -= 3600;
+    if (d.wx < -1800) d.wx += 3600;
+    if (d.wy >  1800) d.wy -= 3600;
+    if (d.wy < -1800) d.wy += 3600;
+  }
+}
+
+function drawDebris(cx, cy) {
+  const camX = ship.worldX, camY = ship.worldY;
+  for (const d of _debris) {
+    const sx = cx + (d.wx - camX);
+    const sy = cy + (d.wy - camY);
+    if (sx < -20 || sx > canvas.width+20 || sy < -20 || sy > canvas.height+20) continue;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(d.angle);
+    ctx.globalAlpha = d.alpha;
+    ctx.fillStyle = '#5a6a7a';
+    const s = d.size;
+    ctx.beginPath();
+    ctx.moveTo(-s, -s*0.4); ctx.lineTo(-s*0.3, -s); ctx.lineTo(s*0.5, -s*0.6);
+    ctx.lineTo(s, 0); ctx.lineTo(s*0.6, s); ctx.lineTo(-s*0.4, s*0.7);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+
+
+// Per-layer drift + opacity pulse params.
+
+// Each layer drifts independently — different speeds and directions = depth.
+
+// Flat base stays stable; L1/L2/L3 breathe and drift at different rates.
+
+// vx/vy: px per frame autonomous drift
+
+// wave: vertical sine amplitude (px) — makes gas undulate as it travels
+
+// pulseAmp: how much opacity swings (0 = none, 0.3 = swings from 0.7 to 1.0)
+
+// pulseSpd: radians per frame for opacity sine (~0.01 = ~10s cycle at 60fps)
+
+// phase: offset so layers don't all pulse in sync
+
+// Nebula drift — values are px/SECOND for each layer.
+// These are intentionally tiny so the gas feels enormous and distant.
+const NEB_LAYERS = [
+  { vx:  0.0, vy:  0.0  }, // [0] FLAT base -- completely static (no drift); aligns to _bgImgs[0]
+  { vx:  0.7, vy:  0.22 }, // [1] L1 far -- slow rightward drift
+  { vx: -0.4, vy:  0.55 }, // [2] L2 mid -- opposing drift, depth
+  { vx:  1.2, vy: -0.18 }, // [3] L3 near -- faster, diff angle
+  { vx: -0.9, vy:  0.35 }, // [4] L4 atmo -- slow counter-drift
+  { vx:  1.6, vy:  0.12 }, // [5] L5 vapor -- closest, fastest
+];
+
+
+
+// ─── INPUT ────────────────────────────────────────────────────────────────────
+
+window.addEventListener('keydown', e => {
+
+  keys[e.code] = true;
+
+  if (e.code === 'KeyE' && !e.repeat) eEdge = true;
+
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
+
+    e.preventDefault();
+
+  if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
+  if (e.code === 'F2') { e.preventDefault(); diagMode  = !diagMode; }
+
+  // Camera zoom: '-' out, '+'/'=' in, '0' reset to default (0.85x). World only.
+  if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+    if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+      camZoomIdx = Math.max(0, camZoomIdx - 1); e.preventDefault();
+    } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); e.preventDefault();
+    } else if (e.code === 'Digit0' || e.code === 'Numpad0') {
+      camZoomIdx = 1; e.preventDefault();
+    }
+  }
+
+  // Record for debugger
+
+  inputLog.push({ t: Date.now(), type: 'keydown', code: e.code });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+
+
+  // Regional map toggle — M key
+  if (e.code === 'KeyM') {
+    // Don't open map while in interior or during a fade
+    if (!interiorMode && interiorFadeDir === 0) {
+      mapMode = !mapMode;
+      DevLog.info('MapSystem', mapMode ? 'Regional map opened' : 'Regional map closed');
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // Dev cheat commands — only fires when DEV_MODE is true and no text input is focused
+  if (DEV_MODE && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+    const _devCmd = DEV_COMMANDS[e.code];
+    if (_devCmd) {
+      e.preventDefault();
+      _devCmd.exec();
+      return;
+    }
+  }
+
+  // Background cycling (dev/debug — [ and ] keys)
+
+  if (e.code === 'BracketLeft') {
+
+    currentBgIdx = (currentBgIdx - 1 + BG_SETS.length) % BG_SETS.length;
+
+    loadBgSet(BG_SETS[currentBgIdx]);
+
+  }
+
+  if (e.code === 'BracketRight') {
+
+    currentBgIdx = (currentBgIdx + 1) % BG_SETS.length;
+
+    loadBgSet(BG_SETS[currentBgIdx]);
+
+  }
+
+});
+
+window.addEventListener('keyup', e => {
+
+  keys[e.code] = false;
+
+  inputLog.push({ t: Date.now(), type: 'keyup', code: e.code });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+});
+
+// Focus loss / tab switch must clear ALL held input so keys never "stick"
+// (a stuck movement or Shift key would otherwise cause runaway thrust/boost).
+function clearAllInput() {
+  for (const k in keys) keys[k] = false;
+  eEdge = false;
+  _ePressed = false;
+  ship.boostRamp = 0;
+  _thrusting = false;
+  _boosting  = false;
+}
+window.addEventListener('blur', clearAllInput);
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearAllInput(); });
+
+
+
+// ─── MOUSE TRACKING ──────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousemove', e => {
+
+  mouseDX = e.clientX - mouseX;
+
+  mouseDY = e.clientY - mouseY;
+
+  mouseX  = e.clientX;
+
+  mouseY  = e.clientY;
+
+  inputLog.push({ t: Date.now(), type: 'mouse', x: mouseX, y: mouseY, dx: mouseDX, dy: mouseDY });
+
+  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
+
+});
+
+
+
+// ─── RESIZE ───────────────────────────────────────────────────────────────────
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+
+window.addEventListener('resize', resize);
+
+resize();
+
+
+
+// ─── DIRECTION ────────────────────────────────────────────────────────────────
+
+function velToDir(vx, vy) {
+
+  const angle = Math.atan2(vy, vx) * (180 / Math.PI);
+
+  let best = 'north', minDiff = Infinity;
+
+  for (let i = 0; i < DIRS.length; i++) {
+
+    let diff = angle - DIR_ANGLES_DEG[i];
+
+    while (diff >  180) diff -= 360;
+
+    while (diff < -180) diff += 360;
+
+    if (Math.abs(diff) < minDiff) { minDiff = Math.abs(diff); best = DIRS[i]; }
+
+  }
+
+  return best;
+
+}
+
+
+
+// ─── PARTICLES ────────────────────────────────────────────────────────────────
+
+function spawnThrust(cx, cy, dir, speed) {
+
+  const count   = Math.ceil(speed * 0.8);
+
+  const backIdx = (DIRS.indexOf(dir) + 4) % 8;
+
+  const backRad = DIR_ANGLES_DEG[backIdx] * (Math.PI / 180);
+
+  const offset  = DISPLAY_SIZE * 0.36;
+
+  for (let i = 0; i < count; i++) {
+
+    const spread = (Math.random() - 0.5) * 1.0;
+
+    const spd    = 1.2 + Math.random() * 2.2;
+
+    particles.push({
+
+      x:     cx + Math.cos(backRad) * offset + (Math.random()-0.5) * 6,
+
+      y:     cy + Math.sin(backRad) * offset + (Math.random()-0.5) * 6,
+
+      vx:    Math.cos(backRad + spread) * spd,
+
+      vy:    Math.sin(backRad + spread) * spd,
+
+      life:  1.0,
+
+      decay: 0.045 + Math.random() * 0.04,
+
+      size:  1.5 + Math.random() * 2,
+
+    });
+
+  }
+
+}
+
+function tickParticles() {
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+
+    const p = particles[i];
+
+    p.x += p.vx; p.y += p.vy;
+
+    p.vx *= 0.93; p.vy *= 0.93;
+
+    p.life -= p.decay;
+
+    if (p.life <= 0) particles.splice(i, 1);
+
+  }
+
+}
+
+function drawParticles() {
+
+  for (const p of particles) {
+
+    ctx.globalAlpha = p.life * 0.85;
+
+    if (p.color) {
+
+      ctx.fillStyle = p.color;
+
+    } else {
+
+      const r = Math.floor(79  + (200 - 79)  * (1 - p.life));
+
+      const g = Math.floor(195 * p.life * 0.6);
+
+      const b = Math.floor(195 * p.life);
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+
+    }
+
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+
+  }
+
+  ctx.globalAlpha = 1;
+
+}
+
+
+
+
+
+// ─── ASTEROID SYSTEM ─────────────────────────────────────────────────────────
+
+function randAsteroidType() {
+
+  // dark_metal / void_dark / lg_planet are rarer — weighted pool
+
+  const pool = ASTEROID_POOL;
+
+  return ASTEROID_TYPES[pool[Math.floor(Math.random() * pool.length)]];
+
+}
+
+
+
+function spawnAsteroid(nearShip) {
+
+  const type  = randAsteroidType();
+
+  const angle = Math.random() * Math.PI * 2;
+
+  const dist  = 600 + Math.random() * (WORLD_SPREAD - 600);
+
+  const ox    = nearShip ? ship.worldX : 0;
+
+  const oy    = nearShip ? ship.worldY : 0;
+
+  asteroids.push({
+
+    type,
+
+    worldX:     ox + Math.cos(angle) * dist,
+
+    worldY:     oy + Math.sin(angle) * dist,
+
+    hp:         type.hp,
+
+    maxHp:      type.hp,
+
+    flashTimer: 0,
+
+    angle:      Math.random() * Math.PI * 2,
+
+    rotSpeed:   (Math.random() - 0.5) * 0.008,
+
+    driftVx:    (Math.random() - 0.5) * 0.18,
+
+    driftVy:    (Math.random() - 0.5) * 0.18,
+
+  });
+
+}
+
+
+
+function initAsteroids() {
+
+  for (let i = 0; i < AST_COUNT; i++) spawnAsteroid(false);
+
+}
+
+
+
+// Mine-chip particles (small rock debris on each hit)
+
+function spawnMineChips(sx, sy, isDark) {
+
+  const count = 5 + Math.floor(Math.random() * 5);
+
+  for (let i = 0; i < count; i++) {
+
+    const a = Math.random() * Math.PI * 2;
+
+    const s = 1.5 + Math.random() * 3.5;
+
+    particles.push({
+
+      x: sx + (Math.random()-0.5)*8, y: sy + (Math.random()-0.5)*8,
+
+      vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+
+      life: 1.0, decay: 0.055 + Math.random()*0.05,
+
+      size: 1.5 + Math.random()*2,
+
+      color: isDark ? '#7090d0' : '#907050',
+
+    });
+
+  }
+
+}
+
+
+
+// Break-burst particles (asteroid destroyed)
+
+function spawnBreakBurst(sx, sy, isDark) {
+
+  const count = 22 + Math.floor(Math.random() * 12);
+
+  for (let i = 0; i < count; i++) {
+
+    const a = Math.random() * Math.PI * 2;
+
+    const s = 0.8 + Math.random() * 5;
+
+    const gold = Math.random() > 0.5;
+
+    particles.push({
+
+      x: sx + (Math.random()-0.5)*14, y: sy + (Math.random()-0.5)*14,
+
+      vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+
+      life: 1.0, decay: 0.025 + Math.random()*0.035,
+
+      size: 2 + Math.random()*4,
+
+      color: isDark ? (gold ? '#FFD700' : '#80aaff')
+
+                    : (gold ? '#FFD700' : '#b08050'),
+
+    });
+
+  }
+
+}
+
+
+
+// ─── MINING UPDATE ───────────────────────────────────────────────────────────
+
+function updateMining() {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const cx   = canvas.width  / 2;
+
+  const cy   = canvas.height / 2;
+
+
+
+  // Tick flash timers, rotation, drift
+
+  for (const ast of getAsteroids()) {
+
+    if (ast.flashTimer > 0) ast.flashTimer--;
+
+    ast.angle  = (ast.angle  || 0) + (ast.rotSpeed || 0);
+
+    ast.worldX += ast.driftVx || 0;
+
+    ast.worldY += ast.driftVy || 0;
+
+  }
+
+
+
+  // Find closest asteroid in mine range
+
+  mineTarget = null; mineDist = Infinity;
+
+  for (const ast of getAsteroids()) {
+
+    const d = Math.hypot(ast.worldX - camX, ast.worldY - camY);
+
+    if (d < MINE_RANGE && d < mineDist) { mineDist = d; mineTarget = ast; }
+
+  }
+
+
+
+  // ── SINGLE [E] INTERACTION RESOLVER ──────────────────────────
+  // Exactly ONE E action per frame. Priority order:
+  //   POD INTERIOR ENTER (edge) > WORLD POD CLAIM (edge) > MINE (hold-to-mine)
+  let _eHandled = false;
+
+  // (1) Enter an attached pod's interior. Edge-triggered; pods with an interior only.
+  if (eEdge && !interiorMode && interiorFadeDir === 0) {
+    for (let _pi = 0; _pi < attachedPods.length; _pi++) {
+      if (attachedPods[_pi].hasInterior) {
+        interiorPodIdx  = _pi;
+        interiorFadeDir = 1;
+        interiorFade    = 0;
+        iPlayerX = 4.5; iPlayerY = 6.5;
+        _eHandled = true;
+        break;
+      }
+    }
+  }
+
+  // (2) Claim / attach a world pod. Edge-triggered.
+  if (!_eHandled && eEdge) {
+    _eHandled = tryClaimWorldPod();
+  }
+
+  // (3) Mine the nearest asteroid. Hold-to-mine, only when E claimed nothing else.
+  if (!_eHandled && keys['KeyE'] && mineTarget && ship.mineCooldown <= 0) {
+    const ast      = mineTarget;
+    const isDark   = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
+    const asx      = cx + (ast.worldX - camX);
+    const asy      = cy + (ast.worldY - camY);
+    ast.hp        -= MINE_DAMAGE;
+    if (multiMode && socket) socket.send(JSON.stringify({ type:'mine', aid: ast.aid, damage: MINE_DAMAGE }));
+    ast.flashTimer = 8;
+    ship.mineCooldown = MINE_INTERVAL;
+    ship.laserWx   = ast.worldX;
+    ship.laserWy   = ast.worldY;
+    ship.laserTimer = 10;
+    spawnMineChips(asx, asy, isDark);
+    if (ast.hp <= 0) {
+      const oreAmt = ast.type.oreMin +
+        Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
+      orePickups.push({
+        worldX: ast.worldX, worldY: ast.worldY,
+        amount: oreAmt, life: 480,
+        lootType: ast.type.lootType || null,
+        lootChance: ast.type.lootChance || 0,
+      });
+      spawnBreakBurst(asx, asy, isDark);
+      if (multiMode && socket) {
+        // Server owns asteroid state — just notify, don't mutate locally
+      } else {
+        asteroids.splice(asteroids.indexOf(ast), 1);
+        toRespawn.push({ timer: 900 });   // respawn ~15s later
+      }
+    }
+  }
+
+  if (ship.mineCooldown > 0) ship.mineCooldown--;
+
+  if (ship.laserTimer   > 0) ship.laserTimer--;
+
+
+
+  // Respawn queue
+
+  for (let i = toRespawn.length - 1; i >= 0; i--) {
+
+    toRespawn[i].timer--;
+
+    if (toRespawn[i].timer <= 0) { spawnAsteroid(true); toRespawn.splice(i, 1); }
+
+  }
+
+
+
+  // Auto-collect ore pickups when ship flies close
+
+  for (let i = orePickups.length - 1; i >= 0; i--) {
+
+    const ore = orePickups[i];
+
+    ore.life--;
+
+    const d = Math.hypot(ore.worldX - camX, ore.worldY - camY);
+
+    if (d < ORE_COLLECT_R) {
+      const space = CARGO_LIMIT - cargoUsed();
+      if (space <= 0) { showToast('⚠ CARGO FULL — ' + cargoUsed() + '/' + CARGO_LIMIT, '#ef4444'); orePickups.splice(i, 1); continue; }
+      const take = Math.min(ore.amount, space);
+
+      ship.ore += take;
+
+      showToast('+' + take + ' NEBULITE  [' + cargoUsed() + '/' + CARGO_LIMIT + ']');
+
+      // Loot drop — check parent asteroid's loot
+      if (ore.lootType && Math.random() < ore.lootChance) {
+        if (ore.lootType === 'mineral') {
+          ship.mineral++;
+          showToast('✦ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
+        } else if (ore.lootType === 'armalcolite') {
+          if (cargoUsed() < CARGO_LIMIT) {
+            ship.armalcolite++;
+            showToast('◈ ARMALCOLITE  [' + ship.armalcolite + ' held]  —  [C] to refine → fuel', '#34d399');
+          } else {
+            showToast('⚠ CARGO FULL — ARMALCOLITE lost', '#ef4444');
+          }
+        }
+      }
+
+      orePickups.splice(i, 1);
+
+    } else if (ore.life <= 0) {
+
+      orePickups.splice(i, 1);
+
+    }
+
+  }
+
+
+
+  // C key: refine ore into fuel
+
+  if (keys['KeyC'] && craftCooldown <= 0) {
+
+    craftCooldown = 30;
+
+    if (ship.armalcolite > 0) {
+      if (multiMode) {
+        sendRefine();
+      } else {
+        // Solo mode refine
+        const gained = FUEL_PER_CRAFT;
+        ship.armalcolite -= 1;
+        ship.fuel = Math.min(FUEL_CAPACITY, ship.fuel + gained);
+        showToast('REFINED ARMALCOLITE \u2192 +' + gained.toFixed(1) + ' FUEL  (' + ship.fuel.toFixed(1) + ')');
+      }
+      craftCooldown = 30;
+    }
+
+  }
+
+  if (craftCooldown > 0) craftCooldown--;
+
+}
+
+
+
+// ─── DRAW ASTEROIDS ──────────────────────────────────────────────────────────
+
+
+
+function drawCompass(cx, cy) {
+  if (!multiMode) return;
+  const entries = Object.values(remotePlayers);
+  if (!entries.length) return;
+  const R = 90;  // compass ring radius from center
+  for (const p of entries) {
+    const dx = p.worldX - ship.worldX;
+    const dy = p.worldY - ship.worldY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 10) continue;
+    const angle = Math.atan2(dy, dx);
+    const ax = cx + Math.cos(angle) * R;
+    const ay = cy + Math.sin(angle) * R;
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, -8); ctx.lineTo(5, 5); ctx.lineTo(0, 2); ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // distance label
+    const label = dist < 1000 ? Math.round(dist) + 'u' : (dist/1000).toFixed(1) + 'ku';
+    ctx.save();
+    ctx.font = '9px monospace';
+    ctx.fillStyle = p.color;
+    ctx.textAlign = 'center';
+    ctx.shadowColor = p.color; ctx.shadowBlur = 4;
+    ctx.fillText(p.name, ax, ay - 14);
+    ctx.fillText(label, ax, ay + 20);
+    ctx.restore();
+  }
+}
+
+function drawAsteroids(cx, cy) {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  ctx.imageSmoothingEnabled = false;
+
+
+
+  for (const ast of getAsteroids()) {
+
+    // Per-type scale override — falls back to global AST_SCALE if not defined
+    const _sc = ast.type.scale || AST_SCALE;
+    const sw  = ast.type.w * _sc;
+
+    const sh  = ast.type.h * _sc;
+
+    const sx  = Math.round(cx + (ast.worldX - camX));
+
+    const sy  = Math.round(cy + (ast.worldY - camY));
+
+    // Rock shake jitter — asteroid jostles briefly when hit (flashTimer > 0)
+    const jx = ast.flashTimer > 0 ? (Math.random()-0.5)*ast.flashTimer*0.5 : 0;
+    const jy = ast.flashTimer > 0 ? (Math.random()-0.5)*ast.flashTimer*0.5 : 0;
+
+
+
+    // Frustum cull
+
+    if (sx < -sw-20 || sx > canvas.width+sw+20 || sy < -sh-20 || sy > canvas.height+sh+20) continue;
+
+
+
+    const img = asteroidImgs[ast.type.id];
+
+
+
+    // Mine-range selection glow
+
+    if (mineTarget === ast) {
+
+      ctx.strokeStyle = keys['KeyE'] ? '#4FC3C3cc' : '#4FC3C344';
+
+      ctx.lineWidth   = keys['KeyE'] ? 2 : 1;
+
+      ctx.strokeRect(sx - sw/2 - 3, sy - sh/2 - 3, sw+6, sh+6);
+
+    }
+
+
+
+    // Hit flash white overlay
+
+    if (ast.flashTimer > 0) {
+
+      ctx.globalAlpha = (ast.flashTimer / 8) * 0.65;
+
+      ctx.fillStyle   = '#ffffff';
+
+      ctx.fillRect(sx - sw/2, sy - sh/2, sw, sh);
+
+      ctx.globalAlpha = 1;
+
+    }
+
+
+
+    if (img) {
+
+      const rot = ast.angle || 0;
+
+      ctx.save();
+
+      ctx.translate(sx + jx, sy + jy);
+
+      ctx.rotate(rot);
+
+      ctx.drawImage(img, -sw/2, -sh/2, sw, sh);
+
+      ctx.restore();
+
+    }
+
+
+
+    // HP bar — only when damaged
+
+    if (ast.hp < ast.maxHp) {
+
+      const bw = sw, bh = 3;
+
+      const bx = sx - sw/2, by = sy + sh/2 + 5;
+
+      const pct = ast.hp / ast.maxHp;
+
+      ctx.fillStyle = '#111a24';
+
+      ctx.fillRect(bx, by, bw, bh);
+
+      ctx.fillStyle = pct > 0.5 ? '#4FC3C3' : pct > 0.25 ? '#e6c040' : '#ff4444';
+
+      ctx.fillRect(bx, by, bw * pct, bh);
+
+    }
+
+
+    // Damage stage overlays — crack lines + sparks as hull degrades
+    if (ast.hp < ast.maxHp) {
+      const _pct = ast.hp / ast.maxHp;
+      if (_pct < 0.75) {
+        ctx.save();
+        ctx.translate(sx + jx, sy + jy);
+        ctx.rotate(ast.angle || 0);
+        ctx.globalAlpha = (1 - _pct) * 0.55;
+        ctx.strokeStyle = '#1a0800';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-sw*0.18, -sh*0.28); ctx.lineTo(sw*0.08, sh*0.12);
+        ctx.moveTo(sw*0.12, -sh*0.22); ctx.lineTo(-sw*0.06, sh*0.25);
+        if (_pct < 0.45) { ctx.moveTo(-sw*0.05, sh*0.1); ctx.lineTo(sw*0.22, -sh*0.05); }
+        ctx.stroke();
+        ctx.restore();
+        // Sparks at critical damage
+        if (_pct < 0.4 && Math.random() < 0.025) {
+          for (let _si = 0; _si < 2; _si++) {
+            particles.push({ x: sx+jx+(Math.random()-0.5)*sw*0.5,
+              y: sy+jy+(Math.random()-0.5)*sh*0.5,
+              vx:(Math.random()-0.5)*2.2, vy:-0.8-Math.random()*2.4,
+              life:1.0, decay:0.1+Math.random()*0.08,
+              size:1+Math.random()*1.2, color:'#ffaa22' });
+          }
+        }
+      }
+    }
+
+    // Context hint — "[E] MINE" floats below target asteroid
+    if (mineTarget === ast) {
+      ctx.save();
+      ctx.font = '10px "Courier New",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#4FC3C3bb';
+      ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 3;
+      ctx.fillText('[E] MINE', sx + jx, sy + jy + sh*0.5 + 16);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
+
+  }
+
+}
+// ─── DRAW ORE PICKUPS ────────────────────────────────────────────────────────
+
+// ─── DRAW WORLD PODS ─────────────────────────────────────────────────────────
+
+function drawWorldPods(cx, cy) {
+  const t = Date.now() * 0.001;
+  for (const pod of worldPods) {
+    const sx = cx + (pod.worldX - ship.worldX);
+    const sy = cy + (pod.worldY - ship.worldY);
+    if (sx < -140 || sx > canvas.width+140 || sy < -140 || sy > canvas.height+140) continue;
+
+    const podType = POD_TYPES[pod.type] || POD_TYPES.modular_space_pod;
+    const dist    = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
+    const inRange = dist < POD_ATTACH_RANGE;
+    const col     = podType.color || '#38bdf8';
+
+    // Slow float bob
+    const bob = Math.sin(t * 0.9 + pod.worldX * 0.003) * 3;
+    const sby = sy + bob;
+
+    // ── Outer beacon ring ──
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2 + pod.worldX * 0.01);
+    ctx.save();
+    ctx.globalAlpha = inRange ? 0.55 + 0.3 * pulse : 0.18 * pulse;
+    ctx.strokeStyle = inRange ? col : col + '88';
+    ctx.lineWidth   = inRange ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.arc(sx, sby, 52 + pulse * 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    // ── Draw modular pod sprite (procedural octagon fallback until art loads) ──
+    ctx.save();
+    ctx.translate(sx, sby);
+
+    // Glow halo behind the sprite
+    const glowR = inRange ? 40 + pulse * 10 : 26;
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+    glow.addColorStop(0, col + (inRange ? '55' : '22'));
+    glow.addColorStop(1, col + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill();
+
+    const _podSprite = podRotations['south'];
+    if (_podSprite && _podSprite.naturalWidth) {
+      const S = POD_DISPLAY_SIZE;
+      ctx.imageSmoothingEnabled = false;
+      if (inRange) { ctx.shadowColor = col; ctx.shadowBlur = 12; }
+      ctx.drawImage(_podSprite, -S/2, -S/2, S, S);
+      ctx.shadowBlur = 0;
+    } else {
+      // Fallback: procedural octagon (only shown before the sprite finishes loading)
+      ctx.shadowColor = col; ctx.shadowBlur = inRange ? 16 : 6;
+      ctx.fillStyle = '#0d1a2a'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      const R = 18;
+      ctx.beginPath();
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 - Math.PI/8;
+        k === 0 ? ctx.moveTo(Math.cos(a)*R, Math.sin(a)*R) : ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R); }
+      ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+    }
+
+    // Status beacon blink (top-right)
+    const blinkOn = Math.floor(t * 2) % 2 === 0;
+    if (blinkOn) { ctx.shadowColor = '#ff4444'; ctx.shadowBlur = 8; ctx.fillStyle = '#ff4444'; }
+    else         { ctx.shadowBlur = 0; ctx.fillStyle = '#331111'; }
+    ctx.beginPath(); ctx.arc(POD_DISPLAY_SIZE*0.28, -POD_DISPLAY_SIZE*0.28, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+
+    // ── Label ──
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font      = '11px Courier New';
+    ctx.fillStyle = col;
+    ctx.globalAlpha = inRange ? 1 : 0.55;
+    ctx.fillText(podType.label, sx, sby - 62);
+    ctx.restore();
+
+    // ── Attach prompt ──
+    if (inRange) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 12px Courier New';
+      ctx.fillStyle = col;
+      ctx.shadowColor = col; ctx.shadowBlur = 8;
+      ctx.fillText('[E]  ATTACH POD  (' + POD_ATTACH_COST + ' ORE)', sx, sby + 72);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+  }
+}
+
+function tryClaimWorldPod() {
+  for (let i = worldPods.length - 1; i >= 0; i--) {
+    const pod  = worldPods[i];
+    const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
+    if (dist < POD_ATTACH_RANGE) {
+
+      if (pod.type === '_wreck') {
+        // Recover wreck cargo
+        const c = pod.cargo || {};
+        ship.ore          += (c.ore          || 0);
+        ship.mineral      += (c.mineral      || 0);
+        ship.armalcolite  += (c.armalcolite  || 0);
+        worldPods.splice(i, 1);
+        const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
+        showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
+        saveGame();
+        for (let p = 0; p < 25; p++) {
+          const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+          particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+            life:40+Math.random()*30,maxLife:70,color:'#f97316',size:2+Math.random()*2});
+        }
+
+      } else {
+        // Attach module pod
+        if (ship.ore >= POD_ATTACH_COST) {
+          ship.ore -= POD_ATTACH_COST;
+          const podType = POD_TYPES[pod.type];
+          attachedPods.push({ ...podType, pid: pod.pid });
+          worldPods.splice(i, 1);
+          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
+          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+          saveGame();
+          for (let p = 0; p < 30; p++) {
+            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
+          }
+        } else {
+          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        }
+      }
+      return true; // one pod per keypress
+    }
+  }
+  return false;
+}
+
+function drawAttachedPods(cx, cy) {
+  if (attachedPods.length) {
+    const t = Date.now() * 0.001;
+    const DIR_OFFSETS = {
+      north:{ox:0,oy:38},northeast:{ox:-27,oy:27},east:{ox:-38,oy:0},
+      southeast:{ox:-27,oy:-27},south:{ox:0,oy:-38},southwest:{ox:27,oy:-27},
+      west:{ox:38,oy:0},northwest:{ox:27,oy:27},
+    };
+    const off = DIR_OFFSETS[ship.dir] || {ox:0,oy:38};
+    attachedPods.forEach((pod, idx) => {
+      const dist  = 42 + idx * 36;
+      const ratio = dist / 38;
+      const px = cx + off.ox * ratio;
+      const py = cy + off.oy * ratio + Math.sin(t*1.8+idx*1.2)*2;
+      ctx.save();
+      // dashed tether line
+      ctx.strokeStyle = "#38bdf866"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
+      ctx.setLineDash([]);
+      // draw pod sprite oriented to ship facing (procedural hexagon fallback until art loads)
+      const col = pod.color||"#38bdf8";
+      const _spr = podRotations[ship.dir] || podRotations['south'];
+      if (_spr && _spr.naturalWidth) {
+        const S = 46;
+        ctx.imageSmoothingEnabled = false;
+        ctx.shadowColor = col; ctx.shadowBlur = 6;
+        ctx.drawImage(_spr, px - S/2, py - S/2, S, S);
+        ctx.shadowBlur = 0;
+      } else {
+        const pulse = 0.7 + 0.3*Math.sin(t*2.4+idx*1.5);
+        ctx.shadowColor = col; ctx.shadowBlur = 12*pulse;
+        ctx.fillStyle = col+"44"; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for(let k=0;k<6;k++){ const a=(k/6)*Math.PI*2 - Math.PI/6; const r=12;
+          k===0?ctx.moveTo(px+Math.cos(a)*r,py+Math.sin(a)*r):ctx.lineTo(px+Math.cos(a)*r,py+Math.sin(a)*r); }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fillStyle=col+"cc";
+        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
+      }
+      ctx.restore();
+    });
+  }
+  if (_autoSaveTimer > 1780) {
+    ctx.save(); ctx.textAlign="right"; ctx.font="11px Courier New";
+    ctx.fillStyle="#22c55e"; ctx.fillText("SAVING...", canvas.width-14, 16);
+    ctx.restore();
+  }
+}
+
+function drawOrePickups(cx, cy) {
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const t    = Date.now() * 0.005;
+
+  ctx.font   = '13px Courier New';
+
+  for (const ore of orePickups) {
+
+    const sx = cx + (ore.worldX - camX);
+
+    const sy = cy + (ore.worldY - camY);
+
+    if (sx < -20 || sx > canvas.width+20 || sy < -20 || sy > canvas.height+20) continue;
+
+    const pulse = 0.5 + 0.5 * Math.sin(t + ore.worldX * 0.001);
+
+    const r = 6 + pulse * 4;
+    const lootCol = ore.lootType==='armalcolite'?'#38bdf8':ore.lootType==='mineral'?'#a78bfa':'#FFD700';
+    const lootLbl = ore.lootType==='armalcolite'?(ore.amount+' ARMALCOLITE')
+                  : ore.lootType==='mineral'?    (ore.amount+' MINERAL MAT')
+                  :                              (ore.amount+' NEBULITE');
+    // Outer glow
+    ctx.globalAlpha=0.35*pulse; ctx.strokeStyle=lootCol; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(sx,sy,r+8,0,Math.PI*2); ctx.stroke();
+    // Inner ring
+    ctx.globalAlpha=0.55*pulse; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx,sy,r+3,0,Math.PI*2); ctx.stroke();
+    // Core
+    ctx.globalAlpha=0.85+0.15*pulse;
+    ctx.fillStyle=lootCol; ctx.shadowColor=lootCol; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+    // Label
+    ctx.globalAlpha=1; ctx.fillStyle=lootCol;
+    ctx.fillText(lootLbl, sx+r+6, sy+5);
+    ctx.globalAlpha=1;
+
+  }
+
+}
+
+
+
+// ─── DRAW MINING LASER ───────────────────────────────────────────────────────
+
+function drawMiningLaser(cx, cy) {
+
+  if (ship.laserTimer <= 0 || ship.laserWx === null) return;
+
+  const camX = ship.worldX, camY = ship.worldY;
+
+  const tx   = cx + (ship.laserWx - camX);
+
+  const ty   = cy + (ship.laserWy - camY);
+
+  const a    = ship.laserTimer / 10;
+
+  ctx.globalAlpha = a * 0.8;
+
+  ctx.strokeStyle = '#4FC3C3';
+
+  ctx.lineWidth   = 1.5;
+
+  ctx.setLineDash([4, 4]);
+
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke();
+
+  ctx.setLineDash([]);
+
+  ctx.globalAlpha = 1;
+
+}
+
+
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+
+function drawToast() {
+
+  if (toastTimer <= 0) return;
+
+  const alpha = Math.min(1, toastTimer / 25);
+
+  ctx.globalAlpha = alpha;
+
+  ctx.font        = '22px Courier New';
+
+  ctx.textAlign   = 'center';
+
+  ctx.fillStyle   = '#FFD700';
+
+  ctx.fillText(toastMsg, canvas.width / 2, canvas.height - 55);
+
+  ctx.textAlign   = 'left';
+
+  ctx.globalAlpha = 1;
+
+  toastTimer--;
+
+}
+
+
+
+// ─── BACKGROUND ───────────────────────────────────────────────────────────────
+
+function drawBG(camX, camY) {
+  const W = canvas.width, H = canvas.height;
+
+  // Deep void base
+  ctx.fillStyle = '#0a0010';
+  ctx.fillRect(0, 0, W, H);
+
+  // Nebula drift time — seconds from page load.
+  // Using Date.now() / 1000 so drift is frame-rate-independent and seamless.
+  const driftT = Date.now() / 1000;
+
+  function _drawNebulaLayer(img, layerIdx, alpha) {
+    if (!img || !img.naturalWidth) return;
+    const lyr   = NEB_LAYERS[layerIdx];
+    const iw    = img.naturalWidth;
+    const ih    = img.naturalHeight;
+    const scale = Math.max(W / iw, H / ih) * 1.04;
+    const sw    = Math.ceil(iw * scale);
+    const sh    = Math.ceil(ih * scale);
+
+    // Autonomous time-based drift only — no player-position parallax.
+    // Gas is so distant that player movement has zero visible effect on it.
+    const offX = ((driftT * lyr.vx % sw) + sw) % sw;
+    const offY = ((driftT * lyr.vy % sh) + sh) % sh;
+
+    ctx.globalAlpha = alpha;
+    for (let x = offX - sw; x < W + sw; x += sw) {
+      for (let y = offY - sh; y < H + sh; y += sh) {
+        ctx.drawImage(img, x, y, sw, sh);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // FLAT base — completely static (no drift)
+  for (let i = 0; i < 6; i++) {
+    _drawNebulaLayer(_bgImgs[i], i, _BG_ALP[i]);
+  }
+
+  // Vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, H*0.12, W/2, H/2, H*0.82);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,6,0.58)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+
+
+// ─── STAR FIELD ───────────────────────────────────────────────────────────────
+// Three parallax layers: far, mid, near.
+// par values are tiny — distant stars barely shift with camera movement.
+// Stars provide the depth cue that the nebula (no parallax) does not.
+const _STAR_LAYERS = [
+  { count: 200, par: 0.0025, rMin: 0.4, rMax: 1.1, baseAlpha: 0.50, twAmp: 0.22, twFreq: 0.35 },
+  { count:  90, par: 0.0080, rMin: 0.7, rMax: 1.7, baseAlpha: 0.65, twAmp: 0.28, twFreq: 0.55 },
+  { count:  35, par: 0.0180, rMin: 1.1, rMax: 2.4, baseAlpha: 0.78, twAmp: 0.18, twFreq: 0.80 },
+];
+
+// Sparse foreground dust — barely visible smudges
+const _DUST = [];
+const _DUST_COUNT = 28;
+
+const _stars = [];
+const _STAR_PALETTE = ['#ffffff','#d8eeff','#ffe8d8','#e0d8ff','#c8e8ff','#fff8d0'];
+
+function _initStars() {
+  _stars.length = 0;
+  // Use a large spread so stars don't noticeably tile within game world bounds
+  const SPREAD = 8000;
+  _STAR_LAYERS.forEach((layer, li) => {
+    for (let i = 0; i < layer.count; i++) {
+      _stars.push({
+        wx:    (Math.random() - 0.5) * SPREAD,
+        wy:    (Math.random() - 0.5) * SPREAD,
+        r:     layer.rMin + Math.random() * (layer.rMax - layer.rMin),
+        li:    li,
+        phase: Math.random() * Math.PI * 2,
+        col:   _STAR_PALETTE[Math.floor(Math.random() * _STAR_PALETTE.length)],
+      });
+    }
+  });
+  // Dust — fixed screen-relative positions, extremely subtle
+  _DUST.length = 0;
+  for (let i = 0; i < _DUST_COUNT; i++) {
+    _DUST.push({
+      wx: (Math.random() - 0.5) * 6000,
+      wy: (Math.random() - 0.5) * 6000,
+      r:  0.3 + Math.random() * 0.5,
+      a:  0.04 + Math.random() * 0.07,
+    });
+  }
+}
+
+function drawStars(camX, camY) {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now() * 0.001;
+
+  // The star "tile" wraps within this size.
+  // Large enough so the seam is never in view during normal play.
+  const SS = 8000;
+
+  for (const star of _stars) {
+    const layer = _STAR_LAYERS[star.li];
+
+    // Screen position with tiny parallax wrap
+    const rawX = star.wx - camX * layer.par;
+    const rawY = star.wy - camY * layer.par;
+    const sx = ((rawX % SS) + SS) % SS - SS / 2 + W / 2;
+    const sy = ((rawY % SS) + SS) % SS - SS / 2 + H / 2;
+
+    if (sx < -4 || sx > W + 4 || sy < -4 || sy > H + 4) continue;
+
+    // Twinkling
+    const tw    = layer.twAmp * Math.sin(t * layer.twFreq * Math.PI * 2 + star.phase);
+    const alpha = Math.max(0.08, layer.baseAlpha + tw);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (star.r > 1.4) {
+      // Larger stars get a tiny soft glow
+      const grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, star.r * 2.5);
+      grd.addColorStop(0, star.col);
+      grd.addColorStop(0.5, star.col + '88');
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(sx, sy, star.r * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Tiny stars — single pixel rect (crisp, no gradient overhead)
+      ctx.fillStyle = star.col;
+      const pr = Math.max(0.5, star.r);
+      ctx.fillRect(Math.round(sx) - pr * 0.5, Math.round(sy) - pr * 0.5, pr, pr);
+    }
+    ctx.restore();
+  }
+
+  // Dust pass — separate loop, very low alpha, no twinkling
+  for (const d of _DUST) {
+    const rawX = d.wx - camX * 0.012;
+    const rawY = d.wy - camY * 0.012;
+    const sx = ((rawX % SS) + SS) % SS - SS / 2 + W / 2;
+    const sy = ((rawY % SS) + SS) % SS - SS / 2 + H / 2;
+    if (sx < -2 || sx > W + 2 || sy < -2 || sy > H + 2) continue;
+    ctx.save();
+    ctx.globalAlpha = d.a;
+    ctx.fillStyle = '#a0b8d0';
+    ctx.fillRect(Math.round(sx), Math.round(sy), d.r, d.r);
+    ctx.restore();
+  }
+}
+
+
+
+
+// ─── SHIP ─────────────────────────────────────────────────────────────────────
+
+function drawShip(cx, cy, now, speed) {
+  // ── Vector fallback if sprites not loaded yet ──
+  const _shipImg = rotations[ship.dir] || null;
+  if (!_shipImg) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(DIR_ANGLES_DEG[DIRS.indexOf(ship.dir)] * Math.PI / 180);
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(0, -18); ctx.lineTo(12, 14); ctx.lineTo(0, 8);
+    ctx.lineTo(-12, 14); ctx.closePath(); ctx.stroke();
+    // engine glow
+    if (_thrusting || _boosting) {
+      ctx.strokeStyle = _boosting ? '#ff6b35' : '#00ff88';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(0, 22); ctx.lineTo(7, 10); ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  const moving = speed > SPEED_THRESH;
+
+  // Idle bob — gentle oscillation when drifting; disappears once thrusting
+  const _bobT = Date.now();
+  const _idleBob = moving ? 0 : Math.sin(_bobT * 0.0012) * 1.8 + Math.cos(_bobT * 0.0007) * 0.8;
+
+  if (moving && now - ship.animTimer > ANIM_INTERVAL) {
+
+    ship.animFrame = (ship.animFrame + 1) % FRAME_COUNT;
+
+    ship.animTimer = now;
+
+  } else if (!moving) {
+
+    ship.animFrame = 0;
+
+  }
+
+  const frame = moving
+
+    ? (animations[ship.dir] && animations[ship.dir][ship.animFrame])
+
+    : rotations[ship.dir];
+
+  if (frame) {
+
+    ctx.imageSmoothingEnabled = false;
+
+    // Thruster glow — radial gradient behind ship, scales with speed and boost
+    if (_thrusting || _boosting) {
+      const _glBackIdx = (DIRS.indexOf(ship.dir) + 4) % 8;
+      const _glBackRad = DIR_ANGLES_DEG[_glBackIdx] * Math.PI / 180;
+      const _gx = cx + Math.cos(_glBackRad) * DISPLAY_SIZE * 0.36;
+      const _gy = cy + _idleBob + Math.sin(_glBackRad) * DISPLAY_SIZE * 0.36;
+      const _glowR = _boosting ? (22 + speed * 4) : (12 + speed * 2);
+      const _grad = ctx.createRadialGradient(_gx, _gy, 0, _gx, _gy, _glowR);
+      _grad.addColorStop(0, _boosting ? 'rgba(255,120,20,0.95)' : 'rgba(60,220,200,0.85)');
+      _grad.addColorStop(0.5, _boosting ? 'rgba(255,60,0,0.4)' : 'rgba(40,160,160,0.3)');
+      _grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = _grad;
+      ctx.beginPath(); ctx.arc(_gx, _gy, _glowR, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.drawImage(
+
+      frame,
+
+      Math.round(cx - DISPLAY_SIZE / 2),
+
+      Math.round(cy + _idleBob - DISPLAY_SIZE / 2),
+
+      DISPLAY_SIZE, DISPLAY_SIZE
+
+    );
+
+  }
+
+}
+
+
+
+// ─── HUD ──────────────────────────────────────────────────────────────────────
+
+// Everything drawn on canvas at 9px Courier New — single consistent style.
+
+const HUD_FONT    = '26px Courier New';
+const HUD_FONT_SM = '22px Courier New';
+const HUD_COLOR = '#4FC3C3';
+const HUD_DIM   = '#4FC3C380';
+
+function hLine(label, value, x, y) {
+  ctx.font      = HUD_FONT;
+  ctx.fillStyle = HUD_DIM;
+  ctx.fillText(label, x, y);
+  ctx.fillStyle = HUD_COLOR;
+  ctx.fillText(value, x + 54, y);
+}
+
+// ── INTERIOR RENDERER ───────────────────────────────────────
+function drawInterior() {
+  const cols = ARMORY_MAP[0].length;
+  const rows = ARMORY_MAP.length;
+  const mapW  = cols * TILE;
+  const mapH  = rows * TILE;
+  const offX  = (canvas.width  - mapW) / 2;
+  const offY  = (canvas.height - mapH) / 2;
+
+  // background
+  ctx.fillStyle = '#0a0e14';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // ── TILES ─────────────────────────────────────────────────────
+  const t_now = performance.now() / 1000;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const tx = offX + c * TILE, ty = offY + r * TILE;
+      const t  = ARMORY_MAP[r][c];
+      if (t === 0) continue;
+
+      if (t === 1) {
+        ctx.fillStyle = '#1a2230';
+        ctx.fillRect(tx, ty, TILE, TILE);
+        ctx.strokeStyle = '#2a3545'; ctx.lineWidth = 1;
+        ctx.strokeRect(tx+1, ty+1, TILE-2, TILE-2);
+      } else if (t === 2) {
+        ctx.fillStyle = '#2c3a4a'; ctx.fillRect(tx, ty, TILE, TILE);
+        ctx.fillStyle = '#3d4f63'; ctx.fillRect(tx+4, ty+4, TILE-8, TILE-8);
+        ctx.fillStyle = '#1a2230'; ctx.fillRect(tx+8, ty+8, TILE-16, TILE-16);
+      } else if (t === 3) {
+        // door
+        ctx.fillStyle = podSecured ? '#0d3340' : '#1a0d0d';
+        ctx.fillRect(tx, ty, TILE, TILE);
+        ctx.fillStyle = podSecured ? '#1a6070' : '#401010';
+        ctx.fillRect(tx+6, ty+6, TILE-12, TILE-12);
+        if (podSecured) {
+          ctx.fillStyle = '#4FC3C3';
+          ctx.fillRect(tx+10, ty+10, (TILE-20)/2-2, TILE-20);
+          ctx.fillRect(tx+10+(TILE-20)/2+2, ty+10, (TILE-20)/2-2, TILE-20);
+        } else {
+          // locked — red X
+          ctx.strokeStyle = '#ff3333'; ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(tx+14,ty+14); ctx.lineTo(tx+TILE-14,ty+TILE-14);
+          ctx.moveTo(tx+TILE-14,ty+14); ctx.lineTo(tx+14,ty+TILE-14);
+          ctx.stroke();
+        }
+        ctx.font = 'bold 9px Courier New'; ctx.textAlign = 'center';
+        ctx.fillStyle = podSecured ? '#4FC3C3' : '#ff3333';
+        ctx.fillText(podSecured ? 'EXIT' : 'LOCKED', tx+TILE/2, ty+TILE-8);
+        ctx.textAlign = 'left';
+      } else if (t === 4) {
+        // crate
+        ctx.fillStyle = '#3a2800'; ctx.fillRect(tx+8, ty+8, TILE-16, TILE-16);
+        ctx.fillStyle = '#c47a1e'; ctx.fillRect(tx+10, ty+10, TILE-20, TILE-20);
+        ctx.strokeStyle = '#8a5010'; ctx.lineWidth = 2;
+        ctx.strokeRect(tx+10, ty+10, TILE-20, TILE-20);
+        ctx.beginPath();
+        ctx.moveTo(tx+10,ty+10); ctx.lineTo(tx+TILE-10,ty+TILE-10);
+        ctx.moveTo(tx+TILE-10,ty+10); ctx.lineTo(tx+10,ty+TILE-10);
+        ctx.stroke();
+      } else if (t === 5) {
+        // weapon rack
+        ctx.fillStyle = '#1a1a2e'; ctx.fillRect(tx+6, ty+6, TILE-12, TILE-12);
+        ctx.strokeStyle = '#D9541E'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(tx+8, ty+8, TILE-16, TILE-16);
+        ctx.strokeStyle = '#ff7744'; ctx.lineWidth = 3;
+        for (let i = 0; i < 3; i++) {
+          const wy = ty + 16 + i*14;
+          ctx.beginPath(); ctx.moveTo(tx+14, wy); ctx.lineTo(tx+TILE-14, wy); ctx.stroke();
+        }
+        ctx.font = 'bold 8px Courier New'; ctx.fillStyle = '#D9541E'; ctx.textAlign = 'center';
+        ctx.fillText('ARMORY', tx+TILE/2, ty+TILE-8); ctx.textAlign = 'left';
+      }
+    }
+  }
+
+  // ── WEAPON PICKUP (if not yet collected) ──────────────────────
+  if (!weaponPickedUp) {
+    weaponGlow += 0.06;
+    const wpx = offX + (WEAPON_PICKUP_POS.col + 0.5) * TILE;
+    const wpy = offY + (WEAPON_PICKUP_POS.row + 0.5) * TILE;
+    const gAlpha = 0.5 + 0.5 * Math.sin(weaponGlow);
+    ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 12 + 8*gAlpha;
+    ctx.fillStyle   = `rgba(56,189,248,${0.7+0.3*gAlpha})`;
+    // draw a small rifle silhouette
+    ctx.save();
+    ctx.translate(wpx, wpy);
+    ctx.rotate(-Math.PI/6);
+    ctx.fillRect(-18, -4, 36, 8);
+    ctx.fillRect(-4, -8, 8, 6);   // grip
+    ctx.fillRect(12, -3, 8, 4);   // barrel extension
+    ctx.restore();
+    ctx.shadowBlur = 0;
+    // label
+    ctx.font = 'bold 9px Courier New'; ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'center';
+    ctx.fillText('PULSE RIFLE', wpx, wpy + 28);
+    ctx.fillText('[E] PICK UP', wpx, wpy + 40);
+    ctx.textAlign = 'left';
+  }
+
+  // ── DRONE ─────────────────────────────────────────────────────
+  if (drone && drone.hp > 0) {
+    droneAlertFlash = Math.max(0, droneAlertFlash - 1);
+    const dx = offX + drone.x * TILE, dy = offY + drone.y * TILE;
+    const flash = droneAlertFlash > 0 && droneAlertFlash % 6 < 3;
+    ctx.shadowColor = flash ? '#ff4444' : '#ff6600';
+    ctx.shadowBlur  = flash ? 24 : 14;
+    // body — hexagon
+    ctx.fillStyle = flash ? '#ff3333' : '#cc3300';
+    ctx.beginPath();
+    for (let a = 0; a < 6; a++) {
+      const angle = (Math.PI/3)*a - Math.PI/6;
+      const r = 14;
+      a===0 ? ctx.moveTo(dx+r*Math.cos(angle), dy+r*Math.sin(angle))
+            : ctx.lineTo(dx+r*Math.cos(angle), dy+r*Math.sin(angle));
+    }
+    ctx.closePath(); ctx.fill();
+    // eye
+    ctx.fillStyle = '#ffff44'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(dx, dy, 5, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // HP bar
+    const hpBarW = 40, hpBarH = 5;
+    ctx.fillStyle = '#300'; ctx.fillRect(dx - hpBarW/2, dy - 22, hpBarW, hpBarH);
+    ctx.fillStyle = drone.hp/DRONE_HP_MAX > 0.5 ? '#ff6600' : '#ff2200';
+    ctx.fillRect(dx - hpBarW/2, dy - 22, hpBarW * (drone.hp/DRONE_HP_MAX), hpBarH);
+    ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 1;
+    ctx.strokeRect(dx - hpBarW/2, dy - 22, hpBarW, hpBarH);
+  }
+
+  // ── PROJECTILES ───────────────────────────────────────────────
+  for (const p of projectiles) {
+    const px2 = offX + p.x * TILE, py2 = offY + p.y * TILE;
+    ctx.shadowColor = p.owner==='player' ? '#38bdf8' : '#ff4400';
+    ctx.shadowBlur  = 8;
+    ctx.fillStyle   = p.owner==='player' ? '#7de8ff' : '#ff6633';
+    ctx.beginPath(); ctx.arc(px2, py2, 4, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // ── PLAYER ────────────────────────────────────────────────────
+  const px = offX + iPlayerX * TILE, py = offY + iPlayerY * TILE;
+  const invFlash = playerInvTimer > 0 && Math.floor(playerInvTimer/4) % 2 === 0;
+  if (!invFlash) {
+    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#4FC3C3';
+    ctx.beginPath(); ctx.arc(px, py, 12, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#0a1520';
+    ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4FC3C3';
+    ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI*2); ctx.fill();
+  }
+
+  // ── HUD STRIP ─────────────────────────────────────────────────
+  ctx.fillStyle = '#000000cc';
+  ctx.fillRect(0, 0, canvas.width, 34);
+  ctx.strokeStyle = '#4FC3C388'; ctx.lineWidth = 1;
+  ctx.strokeRect(0, 0, canvas.width, 34);
+  ctx.font = 'bold 13px Courier New'; ctx.fillStyle = '#4FC3C3';
+  ctx.fillText(podSecured ? 'ARMORY POD' : 'ARMORY POD  ⚠ HOSTILE', 18, 22);
+
+  // player HP bar
+  const hpW = 120;
+  ctx.fillStyle = '#300'; ctx.fillRect(canvas.width - hpW - 18, 8, hpW, 16);
+  ctx.fillStyle = playerHP/PLAYER_HP_MAX > 0.5 ? '#22cc55' : playerHP/PLAYER_HP_MAX > 0.25 ? '#ffaa00' : '#ff2222';
+  ctx.fillRect(canvas.width - hpW - 18, 8, hpW * (playerHP/PLAYER_HP_MAX), 16);
+  ctx.strokeStyle = '#4FC3C388'; ctx.lineWidth = 1;
+  ctx.strokeRect(canvas.width - hpW - 18, 8, hpW, 16);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText('HP ' + playerHP + '/' + PLAYER_HP_MAX, canvas.width - hpW/2 - 18, 21);
+  ctx.textAlign = 'left';
+
+  // weapon status (bottom left)
+  if (weapon) {
+    ctx.fillStyle = '#000000aa'; ctx.fillRect(12, canvas.height-40, 180, 28);
+    ctx.strokeStyle = '#38bdf8aa'; ctx.strokeRect(12, canvas.height-40, 180, 28);
+    ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 11px Courier New';
+    ctx.fillText('PULSE RIFLE  ' + weapon.ammo + '/' + weapon.maxAmmo, 22, canvas.height-22);
+  }
+
+  // controls hint
+  ctx.fillStyle = '#4a6070'; ctx.font = '10px Courier New';
+  ctx.fillText('WASD=MOVE  CLICK=SHOOT', canvas.width/2 - 80, canvas.height - 14);
+
+  // proximity prompts
+  if (podSecured) {
+    const distDoor = Math.hypot(iPlayerX - DOOR_COL - 0.5, iPlayerY - DOOR_ROW - 0.5);
+    if (distDoor < 1.5) {
+      ctx.font = 'bold 13px Courier New'; ctx.fillStyle = '#4FC3C3';
+      ctx.textAlign = 'center';
+      ctx.fillText('[E]  EXIT TO SPACE', canvas.width/2, canvas.height - 60);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // weapon pickup prompt
+  if (!weaponPickedUp) {
+    const distWep = Math.hypot(iPlayerX - WEAPON_PICKUP_POS.col - 0.5, iPlayerY - WEAPON_PICKUP_POS.row - 0.5);
+    if (distWep < 1.2) {
+      ctx.font = 'bold 13px Courier New'; ctx.fillStyle = '#38bdf8';
+      ctx.textAlign = 'center';
+      ctx.fillText('[E]  PICK UP PULSE RIFLE', canvas.width/2, canvas.height - 60);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // secured banner (brief flash)
+  if (podSecured && drone && drone.hp <= 0 && !drone._bannerDone) {
+    drone._bannerDone = true;
+  }
+}
+
+
+function updateInteriorPlayer() {
+  if (!interiorMode) return;
+  const cols = ARMORY_MAP[0].length, rows = ARMORY_MAP.length;
+
+  // ── MOVEMENT ──
+  let nx = iPlayerX, ny = iPlayerY;
+  if (keys['ArrowUp']    || keys['KeyW']) ny -= I_SPEED;
+  if (keys['ArrowDown']  || keys['KeyS']) ny += I_SPEED;
+  if (keys['ArrowLeft']  || keys['KeyA']) nx -= I_SPEED;
+  if (keys['ArrowRight'] || keys['KeyD']) nx += I_SPEED;
+  const margin = 0.35;
+  const walkable = t => t===1 || t===3 || t===4 || t===5;
+  const tileAt = (x,y) => {
+    const tc=Math.floor(x), tr=Math.floor(y);
+    if (tr<0||tr>=rows||tc<0||tc>=cols) return 2;
+    return ARMORY_MAP[tr][tc];
+  };
+  if (walkable(tileAt(nx+margin,iPlayerY)) && walkable(tileAt(nx-margin,iPlayerY))) iPlayerX=nx;
+  if (walkable(tileAt(iPlayerX,ny+margin)) && walkable(tileAt(iPlayerX,ny-margin))) iPlayerY=ny;
+
+  // ── INVINCIBILITY TIMER ──
+  if (playerInvTimer > 0) playerInvTimer--;
+
+  // ── SPAWN DRONE if not yet secured ──
+  if (!podSecured && !drone) {
+    drone = { x: 4.5, y: 1.5, hp: DRONE_HP_MAX, vx: 0, vy: 0, _bannerDone: false };
+  }
+
+  // ── DRONE AI ──
+  if (drone && drone.hp > 0) {
+    const ddx = iPlayerX - drone.x, ddy = iPlayerY - drone.y;
+    const dist = Math.hypot(ddx, ddy);
+    if (dist > 0.01) {
+      drone.x += (ddx/dist) * DRONE_SPEED;
+      drone.y += (ddy/dist) * DRONE_SPEED;
+    }
+    // drone wall clamp
+    if (!walkable(tileAt(drone.x, drone.y))) { drone.x=4.5; drone.y=1.5; }
+    // melee attack
+    droneFireTimer = Math.max(0, droneFireTimer-1);
+    if (dist < DRONE_ATTACK_R && droneFireTimer===0) {
+      droneFireTimer = DRONE_FIRE_CD;
+      if (playerInvTimer===0) {
+        playerHP = Math.max(0, playerHP - DRONE_DMG);
+        playerInvTimer = PLAYER_INV_DUR;
+        droneAlertFlash = 20;
+        if (playerHP<=0) { iPlayerX=4.5; iPlayerY=6.5; playerHP=Math.floor(PLAYER_HP_MAX*0.5); }
+      }
+    }
+  }
+
+  // ── PROJECTILES ──
+  shootCooldown = Math.max(0, shootCooldown-1);
+  for (let i = projectiles.length-1; i>=0; i--) {
+    const p = projectiles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (!walkable(tileAt(p.x, p.y)) || p.life<=0) { projectiles.splice(i,1); continue; }
+    if (p.owner==='player' && drone && drone.hp>0) {
+      if (Math.hypot(p.x - drone.x, p.y - drone.y) < 0.5) {
+        drone.hp -= 12; droneAlertFlash=12; projectiles.splice(i,1);
+        if (drone.hp<=0) { podSecured=true; showToast('✓ POD SECURED — dock to attach'); }
+        continue;
+      }
+    }
+  }
+
+  // ── [E] INTERACTIONS ──
+  // weapon pickup
+  if (!weaponPickedUp) {
+    const dw = Math.hypot(iPlayerX - WEAPON_PICKUP_POS.col - 0.5, iPlayerY - WEAPON_PICKUP_POS.row - 0.5);
+    if (dw < 1.2 && eEdge) {
+      weapon = { type:'pulse_rifle', ammo:24, maxAmmo:24 };
+      weaponPickedUp = true;
+      showToast('⚡ PULSE RIFLE acquired  24/24');
+      eEdge = false;
+    }
+  }
+  // door exit (secured only)
+  const onDoor = Math.floor(iPlayerX)===DOOR_COL && Math.floor(iPlayerY)===DOOR_ROW;
+  if (onDoor && podSecured && eEdge) {
+    interiorFadeDir = -1; eEdge = false;
+  }
+}
+
+function drawHUD(speed) {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+  if (_hudBounds !== null) _hudBounds = [];
+
+  // ── Palette ──
+  const TEAL   = '#4FC3C3';
+  const ORANGE = '#e07b30';
+  const WHT    = '#d0e4f0';
+  const DIM    = '#3a5060';
+  const ACC    = '#38bdf8';
+  const ERR    = '#ef4444';
+
+  // ── Layout constants — all drawing uses these, nothing else ──
+  const PAD_X  = 10;   // left/right interior padding
+  const PAD_Y  = 10;   // top/bottom interior padding
+  const PW     = 240;  // panel width
+  const PX     = 14;   // panel left edge from screen
+  const PY_TOP = 14;   // panel top edge from screen
+  const R_H    = 19;   // standard row height (a touch taller — breathing room)
+  const B_H    =  4;   // bar fill height
+  const B_OFF  =  5;   // bar top from row top (so bar is vertically centered)
+  const TXT    = 13;   // text baseline offset from row top (consistent across all rows)
+  const DIV_A  =  7;   // space above divider line (consistent divider padding)
+  const DIV_B  =  7;   // space below divider line
+  const SEC_B  =  5;   // space below section label
+
+  // ── Derived values ──
+  const fuelPct    = ship.fuel / FUEL_CAPACITY;
+  const hpPct      = ship.hp / SHIP_MAX_HP;
+  const cUsed      = cargoUsed();
+  const cMax       = (ship.shipType ? ship.shipType.cargoLimit : 50) +
+                     attachedPods.reduce((s, p) => s + (p.cargoBonus || 0), 0);
+  const cFull      = cUsed >= cMax;
+  const boostOn    = _boosting && ship.fuel > 0;
+  const fuelLow    = fuelPct < 0.2;
+  const fuelEmpty  = ship.fuel <= 0;
+  const resRows    = (ship.ore > 0 ? 1 : 0) + (ship.mineral > 0 ? 1 : 0) + (ship.armalcolite > 0 ? 1 : 0);
+  const emptyHold  = resRows === 0;
+
+  // ── Pre-calculate panel height ──
+  // Every block below adds the same amount it will draw.
+  // Formula is the single source of truth — drawing code MUST match it.
+  const DIV = DIV_A + 1 + DIV_B;   // 11px per divider
+  const SEC = R_H + SEC_B;         // 22px per section label row
+
+  let PH = PAD_Y;
+  // Header
+  PH += R_H + 4;                             // ship name (slightly taller)
+  // ─ NAVIGATION ─
+  PH += DIV;                                  // divider
+  PH += SEC;                                  // section label
+  PH += R_H;                                  // speed bar row
+  PH += R_H;                                  // direction row
+  PH += R_H;                                  // position row
+  // ─ SHIP ─
+  PH += DIV;
+  PH += SEC;
+  PH += R_H;                                  // hull bar
+  PH += R_H;                                  // fuel bar
+  if (fuelEmpty || fuelLow)  PH += R_H;       // optional fuel warning
+  // ─ CARGO ─
+  PH += DIV;
+  PH += SEC;
+  PH += R_H;                                  // hold label+count
+  PH += B_OFF + B_H + 5;                      // cargo bar  (B_OFF + bar + gap)
+  PH += (emptyHold ? 1 : resRows) * R_H;      // resource rows (or empty-hold text)
+  // ─ Pods (optional) ─
+  if (attachedPods.length > 0) {
+    PH += DIV;
+    PH += attachedPods.length * R_H;
+  }
+  // ─ CONTEXT ─
+  PH += DIV;
+  PH += SEC;
+  PH += R_H;  // [C]
+  PH += R_H;  // [E]
+  // Footer
+  PH += DIV_A + 1 + DIV_B;                   // thin divider above coords
+  PH += R_H;                                  // coordinate row
+  PH += PAD_Y;
+
+  // ── Panel background ──
+  ctx.save();
+  ctx.fillStyle = 'rgba(2,6,14,0.86)';
+  roundRect(ctx, PX, PY_TOP, PW, PH, 4);
+  ctx.fill();
+  ctx.strokeStyle = TEAL + '28';
+  ctx.lineWidth = 1;
+  roundRect(ctx, PX, PY_TOP, PW, PH, 4);
+  ctx.stroke();
+  ctx.fillStyle = TEAL;
+  ctx.fillRect(PX, PY_TOP, 2, PH);            // left accent bar
+  ctx.restore();
+
+  // ── Content layout columns (fixed; nothing positions by text width) ──
+  //   Row grid:  [labelX ..]  [gaugeX .. gaugeX+gaugeW]   GAP   [.. valueX]
+  //   The gauge and the value occupy separate X ranges and can never overlap.
+  const L       = PX + PAD_X;               // labelX — left text start
+  const R       = PX + PW - PAD_X;          // valueX — right-aligned value column edge
+  const VALUE_W = 60;                       // reserved width for the value column
+  const GAP     = 8;                        // gap between gauge and value column
+  const LV      = L + 44;                   // gaugeX — bar left edge
+  const BW      = (R - VALUE_W - GAP) - LV; // gaugeW — bar width (value column stays clear)
+
+  let y = PY_TOP + PAD_Y;
+
+  const F_SML = '11px "Courier New",monospace';
+  const F_MED = '12px "Courier New",monospace';
+  const F_HDR = 'bold 13px "Courier New",monospace';
+  const F_SEC = '10px "Courier New",monospace';
+  const F_XSM = '10px "Courier New",monospace';
+
+  // ── DEV: collision-box overlay (F2). Boxes each layout row so overlaps are obvious. ──
+  const HDBG = DEV_MODE && diagMode;
+  function hbox(y0) {
+    if (_hudBounds !== null) _hudBounds.push({ y0, y1: y });
+    if (!HDBG) return;
+    ctx.save();
+    ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(PX + 1.5, y0 + 0.5, PW - 3, (y - y0) - 1);
+    ctx.restore();
+  }
+
+  // ── helper: bar row (label + fill bar + right-aligned value) ──
+  function barRow(label, pct, c0, c1, valStr, valCol) {
+    const _y0 = y;
+    ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
+    ctx.fillText(label, L, y + TXT);
+    const bx = LV, by = y + B_OFF;
+    ctx.fillStyle = '#08111e';
+    ctx.fillRect(bx, by, BW, B_H);
+    const bg = ctx.createLinearGradient(bx, 0, bx + BW, 0);
+    bg.addColorStop(0, c0); bg.addColorStop(1, c1 || c0);
+    ctx.fillStyle = bg;
+    ctx.fillRect(bx, by, BW * Math.min(Math.max(pct, 0), 1), B_H);
+    ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(bx, by, BW, B_H);
+    if (valStr !== undefined) {
+      ctx.font = F_SML; ctx.fillStyle = valCol || WHT; ctx.textAlign = 'right';
+      ctx.fillText(valStr, R, y + TXT);
+      ctx.textAlign = 'left';
+    }
+    y += R_H;
+    hbox(_y0);
+  }
+
+  // ── helper: plain text row (left label + optional right value) ──
+  function txtRow(label, val, lCol, vCol) {
+    const _y0 = y;
+    ctx.font = F_SML; ctx.fillStyle = lCol || DIM; ctx.textAlign = 'left';
+    ctx.fillText(label, L, y + TXT);
+    if (val !== undefined) {
+      ctx.font = F_SML; ctx.fillStyle = vCol || WHT; ctx.textAlign = 'right';
+      ctx.fillText(val, R, y + TXT);
+      ctx.textAlign = 'left';
+    }
+    y += R_H;
+    hbox(_y0);
+  }
+
+  // ── helper: section divider + label ──
+  function section(label) {
+    const _y0 = y;
+    y += DIV_A;
+    ctx.strokeStyle = TEAL + '20'; ctx.lineWidth = 0.75;
+    ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
+    y += 1 + DIV_B;
+    ctx.font = F_SEC; ctx.fillStyle = TEAL + '99'; ctx.textAlign = 'left';
+    ctx.fillText(label, L, y + TXT - 1);
+    y += R_H + SEC_B;
+    hbox(_y0);
+  }
+
+  // ════════════════════════════════════════════
+  // HEADER — ship name + inline compass
+  // ════════════════════════════════════════════
+  ctx.save();
+  ctx.font = F_HDR; ctx.fillStyle = TEAL;
+  ctx.shadowColor = TEAL; ctx.shadowBlur = 5; ctx.textAlign = 'left';
+  ctx.fillText('◈  ' + (ship.shipType ? ship.shipType.name.toUpperCase() : 'SHIP'), L, y + TXT + 1);
+  ctx.shadowBlur = 0;
+  // Compass
+  const cpX = PX + PW - PAD_X - 11, cpY = y + 9, cpR = 10;
+  ctx.strokeStyle = DIM; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cpX, cpY, cpR, 0, Math.PI * 2); ctx.stroke();
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = TEAL; ctx.lineWidth = 1.8;
+    ctx.shadowColor = TEAL; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.moveTo(cpX, cpY);
+    ctx.lineTo(cpX + Math.cos(da) * (cpR - 1), cpY + Math.sin(da) * (cpR - 1));
+    ctx.stroke(); ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+  y += R_H + 4;
+
+  // ════════════════════════════════════════════
+  // NAVIGATION
+  // ════════════════════════════════════════════
+  section('NAVIGATION');
+
+  // Speed bar
+  barRow('SPD',
+    speed / BOOST_MAX,
+    '#1e5a7a', boostOn ? '#ff6b35' : TEAL,
+    speed.toFixed(2),
+    boostOn ? '#ff9055' : WHT);
+
+  // Direction
+  txtRow('DIR', ship.dir.toUpperCase().replace('-', '  '));
+
+  // Position
+  txtRow('POS', Math.floor(ship.worldX) + '  ·  ' + Math.floor(ship.worldY));
+
+  // ════════════════════════════════════════════
+  // SHIP
+  // ════════════════════════════════════════════
+  section('SHIP');
+
+  // Hull bar
+  barRow('HULL',
+    hpPct,
+    hpPct > 0.5 ? '#1d5e38' : hpPct > 0.25 ? '#7a5500' : '#6b1000',
+    hpPct > 0.5 ? '#36e878' : hpPct > 0.25 ? '#ffbb00' : '#ff3333',
+    ship.hp + ' / ' + SHIP_MAX_HP,
+    hpPct < 0.25 ? ERR : WHT);
+
+  // Fuel — segmented bar (custom renderer)
+  const _yFuel = y;
+  ctx.font = F_SML; ctx.textAlign = 'left';
+  if (boostOn) { ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 5; ctx.fillStyle = '#ffcc55'; }
+  else         { ctx.shadowBlur = 0; ctx.fillStyle = fuelLow ? ORANGE : DIM; }
+  ctx.fillText('FUEL', L, y + TXT);
+  ctx.shadowBlur = 0;
+
+  const segN  = 10, segGap = 2;
+  const segBW = Math.floor((BW - segGap * (segN - 1)) / segN);
+  const fBy   = y + B_OFF;
+  for (let i = 0; i < segN; i++) {
+    const lit = i < Math.ceil(fuelPct * segN);
+    let sc;
+    if (!lit) { sc = '#08111e'; }
+    else if (boostOn) {
+      const flk = 0.55 + 0.45 * Math.sin(t * 0.018 + i * 0.9);
+      sc = `rgb(255,${Math.round(80 + 120 * flk)},${Math.round(10 + 30 * flk)})`;
+    } else {
+      sc = fuelPct > 0.5 ? '#2a9e5a' : fuelPct > 0.25 ? '#c8a020' : ORANGE;
+    }
+    if (boostOn && lit) { ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 3 + 2 * Math.sin(t * 0.02 + i); }
+    ctx.fillStyle = sc;
+    ctx.fillRect(LV + i * (segBW + segGap), fBy, segBW, B_H);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = TEAL + '14'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(LV + i * (segBW + segGap), fBy, segBW, B_H);
+  }
+  ctx.font = F_SML; ctx.fillStyle = fuelLow ? ORANGE : WHT; ctx.textAlign = 'right';
+  ctx.fillText(ship.fuel.toFixed(1) + ' gal', R, y + TXT);
+  ctx.textAlign = 'left';
+  y += R_H;
+  hbox(_yFuel);
+
+  // Fuel warning (only when applicable — height already reserved in PH)
+  if (fuelEmpty) {
+    const _yw = y;
+    ctx.font = F_SML; ctx.fillStyle = ERR; ctx.textAlign = 'left';
+    ctx.fillText('✕  FUEL EMPTY — ADRIFT', L, y + TXT);
+    y += R_H;
+    hbox(_yw);
+  } else if (fuelLow) {
+    const _yw = y;
+    const blink = Math.floor(t / 500) % 2 === 0;
+    ctx.font = F_SML; ctx.fillStyle = blink ? '#ffaa00' : ORANGE; ctx.textAlign = 'left';
+    ctx.fillText('⚠  LOW FUEL', L, y + TXT);
+    y += R_H;
+    hbox(_yw);
+  }
+
+  // ════════════════════════════════════════════
+  // CARGO
+  // ════════════════════════════════════════════
+  section('CARGO');
+
+  // Hold header row
+  const _yHold = y;
+  ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : DIM; ctx.textAlign = 'left';
+  ctx.fillText('HOLD', L, y + TXT);
+  ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : WHT; ctx.textAlign = 'right';
+  ctx.fillText(cUsed + ' / ' + cMax + (cFull ? '  ●FULL' : ''), R, y + TXT);
+  ctx.textAlign = 'left';
+  y += R_H;
+  hbox(_yHold);
+
+  // Cargo fill bar (thin, full panel width)
+  const _yBar = y;
+  const cbx = L, cby = y + B_OFF, cbw = PW - PAD_X * 2, cbh = B_H;
+  ctx.fillStyle = '#08111e'; ctx.fillRect(cbx, cby, cbw, cbh);
+  const cg = ctx.createLinearGradient(cbx, 0, cbx + cbw, 0);
+  cg.addColorStop(0, '#1e5a7a'); cg.addColorStop(1, cFull ? ERR : ACC);
+  ctx.fillStyle = cg;
+  ctx.fillRect(cbx, cby, cbw * (cUsed / Math.max(cMax, 1)), cbh);
+  ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
+  ctx.strokeRect(cbx, cby, cbw, cbh);
+  y += B_OFF + B_H + 5;
+  hbox(_yBar);
+
+  // Resource rows
+  if (emptyHold) {
+    const _yr = y;
+    ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
+    ctx.fillText('— empty hold —', L + 6, y + TXT);
+    y += R_H;
+    hbox(_yr);
+  } else {
+    if (ship.ore > 0) {
+      const _yr = y;
+      ctx.font = F_MED; ctx.fillStyle = '#FFD700'; ctx.textAlign = 'left';
+      ctx.fillText('◆  ' + ship.ore + '  NEBULITE', L + 4, y + TXT);
+      y += R_H;
+      hbox(_yr);
+    }
+    if (ship.mineral > 0) {
+      const _yr = y;
+      ctx.font = F_MED; ctx.fillStyle = '#c4b5fd'; ctx.textAlign = 'left';
+      ctx.fillText('♦  ' + ship.mineral + '  MINERAL', L + 4, y + TXT);
+      y += R_H;
+      hbox(_yr);
+    }
+    if (ship.armalcolite > 0) {
+      const _yr = y;
+      ctx.font = F_MED; ctx.fillStyle = '#6ee7b7'; ctx.textAlign = 'left';
+      ctx.fillText('◈  ' + ship.armalcolite + '  ARMALCOLITE', L + 4, y + TXT);
+      y += R_H;
+      hbox(_yr);
+    }
+  }
+
+  // ─ Attached pods ─
+  if (attachedPods.length > 0) {
+    y += DIV_A;
+    ctx.strokeStyle = ACC + '20'; ctx.lineWidth = 0.75;
+    ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
+    y += 1 + DIV_B;
+    attachedPods.forEach(p => {
+      const _yp = y;
+      ctx.font = F_MED; ctx.fillStyle = p.color || ACC; ctx.textAlign = 'left';
+      ctx.fillText('⦿  ' + p.label + (p.cargoBonus ? '  +' + p.cargoBonus + ' cargo' : ''), L + 4, y + TXT);
+      y += R_H;
+      hbox(_yp);
+    });
+  }
+
+  // ════════════════════════════════════════════
+  // CONTEXT
+  // ════════════════════════════════════════════
+  section('CONTEXT');
+
+  const canCraft = ship.armalcolite > 0;
+  ctx.textAlign = 'left';
+
+  // [C] Refine
+  const _yC = y;
+  ctx.font = F_SML; ctx.fillStyle = canCraft ? '#FFD700' : DIM;
+  ctx.fillText('[C]', L, y + TXT);
+  ctx.fillStyle = canCraft ? WHT : DIM;
+  ctx.fillText(' REFINE  →  +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', L + 22, y + TXT);
+  y += R_H;
+  hbox(_yC);
+
+  // [E] Mine
+  const _yE = y;
+  ctx.font = F_SML; ctx.fillStyle = mineTarget ? TEAL : DIM;
+  ctx.fillText('[E]', L, y + TXT);
+  ctx.fillStyle = mineTarget ? WHT : DIM;
+  ctx.fillText(' MINE' + (mineTarget ? '  ' + Math.round(mineDist) + ' px' : ''), L + 22, y + TXT);
+  y += R_H;
+  hbox(_yE);
+
+  // ════════════════════════════════════════════
+  // FOOTER — coordinates
+  // ════════════════════════════════════════════
+  const _yF = y;
+  y += DIV_A;
+  ctx.strokeStyle = TEAL + '14'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
+  y += 1 + DIV_B;
+  ctx.font = F_XSM; ctx.fillStyle = DIM + 'cc'; ctx.textAlign = 'left';
+  ctx.fillText(Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), L, y + TXT);
+  y += R_H;
+  hbox(_yF);
+
+  // ─ Map name flash ─
+  if (bgFlash && bgFlash.timer > 0) {
+    const fa = Math.min(1, bgFlash.timer / 30);
+    ctx.save(); ctx.globalAlpha = fa;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 14px "Courier New",monospace';
+    ctx.fillStyle = TEAL; ctx.shadowColor = TEAL; ctx.shadowBlur = 12;
+    ctx.fillText('MAP: ' + bgFlash.name.replace('_', ' ').toUpperCase(), W / 2, H - 30);
+    ctx.restore();
+    bgFlash.timer--;
+  }
+}
+
+// Helper: rounded rect path
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+
+// ─── MINIMAP ─────────────────────────────────────────────────────────────────
+function drawMinimap() {
+  const W = canvas.width, H = canvas.height;
+  const MR = 72;                    // minimap radius px
+  const MX = W - MR - 16;          // center x
+  const MY = H - MR - 16;          // center y
+  const SCALE = MR / 1400;         // world-px to minimap-px  (1400 world = 1 minimap radius)
+  const t = Date.now();
+
+  ctx.save();
+
+  // Clip to circle
+  ctx.beginPath(); ctx.arc(MX, MY, MR, 0, Math.PI*2); ctx.clip();
+
+  // Background
+  ctx.fillStyle = 'rgba(2,8,18,0.88)';
+  ctx.fillRect(MX-MR, MY-MR, MR*2, MR*2);
+
+  // Subtle grid rings
+  ctx.strokeStyle = '#4FC3C310'; ctx.lineWidth = 0.5;
+  for (let r = MR/3; r <= MR; r += MR/3) {
+    ctx.beginPath(); ctx.arc(MX, MY, r, 0, Math.PI*2); ctx.stroke();
+  }
+  // Cross hairs
+  ctx.beginPath(); ctx.moveTo(MX-MR, MY); ctx.lineTo(MX+MR, MY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(MX, MY-MR); ctx.lineTo(MX, MY+MR); ctx.stroke();
+
+  // ── Asteroids — orange dots ──
+  for (const ast of getAsteroids()) {
+    const dx = (ast.worldX - ship.worldX) * SCALE;
+    const dy = (ast.worldY - ship.worldY) * SCALE;
+    if (dx*dx + dy*dy > MR*MR) continue;
+    const sz = Math.max(1.5, (ast.type ? ast.type.w / 20 : 2));
+    ctx.fillStyle = '#f97316';
+    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 3;
+    ctx.beginPath(); ctx.arc(MX+dx, MY+dy, sz, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // ── Ore pickups — green dots ──
+  if (typeof orePickups !== 'undefined') {
+    for (const o of orePickups) {
+      const dx = (o.worldX - ship.worldX) * SCALE;
+      const dy = (o.worldY - ship.worldY) * SCALE;
+      if (dx*dx + dy*dy > MR*MR) continue;
+      ctx.fillStyle = '#22c55e';
+      ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 4;
+      ctx.beginPath(); ctx.arc(MX+dx, MY+dy, 2, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  // ── World pods — cyan blips (pulsing) ──
+  const blink = 0.6 + 0.4 * Math.sin(t * 0.004);
+  for (const pod of worldPods) {
+    const dx = (pod.worldX - ship.worldX) * SCALE;
+    const dy = (pod.worldY - ship.worldY) * SCALE;
+    if (dx*dx + dy*dy > MR*MR) continue;
+    const pCol = (POD_TYPES[pod.type]||{}).color || '#38bdf8';
+    ctx.fillStyle = pCol;
+    ctx.shadowColor = pCol; ctx.shadowBlur = 5 * blink;
+    ctx.globalAlpha = blink;
+    ctx.beginPath(); ctx.arc(MX+dx, MY+dy, 3, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.shadowBlur = 0;
+
+  // ── Player dot — white center ──
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(MX, MY, 3.5, 0, Math.PI*2); ctx.fill();
+
+  // Player direction tick
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.moveTo(MX + Math.cos(da)*5, MY + Math.sin(da)*5);
+    ctx.lineTo(MX + Math.cos(da)*10, MY + Math.sin(da)*10);
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  ctx.restore();  // end clip
+
+  // ── Outer border ring ──
+  ctx.strokeStyle = '#4FC3C3';
+  ctx.lineWidth = 1.2;
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.arc(MX, MY, MR, 0, Math.PI*2); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Label
+  ctx.save();
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C388';
+  ctx.textAlign = 'center';
+  ctx.fillText('SECTOR MAP', MX, MY + MR + 12);
+  ctx.restore();
+
+  // Legend — tiny, bottom-right corner under ring
+  const lx = MX - MR + 4, ly = MY + MR - 22;
+  ctx.save(); ctx.font = '8px "Courier New", monospace';
+  ctx.fillStyle = '#f97316'; ctx.beginPath(); ctx.arc(lx+4, ly, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f9731688'; ctx.fillText('AST', lx+10, ly+3);
+  ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(lx+4, ly+10, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#38bdf888'; ctx.fillText('POD', lx+10, ly+13);
+  ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.arc(lx+4, ly+20, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#22c55e88'; ctx.fillText('ORE', lx+10, ly+23);
+  ctx.restore();
+}
+
+
+// ─── REGIONAL MAP OVERLAY ─────────────────────────────────────────────────────
+// Press M to open/close. Shows local sector: player, pods, asteroids, ore, signals.
+// Suspends movement while open. MVP — no fog of war, full range shown.
+function drawRegionalMap() {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+
+  // ── Full-screen dim ──
+  ctx.fillStyle = 'rgba(0,4,12,0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Map panel ──
+  const MPW = Math.min(900, W - 80);   // map panel width
+  const MPH = Math.min(680, H - 80);   // map panel height
+  const MPX = (W - MPW) / 2;
+  const MPY = (H - MPH) / 2;
+
+  // Panel background + border
+  ctx.fillStyle = 'rgba(2,8,18,0.96)';
+  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#4FC3C3';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 10;
+  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Title
+  ctx.save();
+  ctx.font = 'bold 14px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C3';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 8;
+  ctx.fillText('◈  SECTOR MAP', W/2, MPY + 24);
+  ctx.shadowBlur = 0;
+
+  // Ship name + coords subtitle
+  ctx.font = '11px "Courier New", monospace';
+  ctx.fillStyle = '#3a5060';
+  ctx.fillText(
+    (ship.shipType ? ship.shipType.name : 'SHIP') +
+    '  ·  ' + Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY),
+    W/2, MPY + 42
+  );
+  ctx.restore();
+
+  // ── Map drawing area (inside panel, with margin) ──
+  const MX = MPX + 40,  MY = MPY + 60;   // draw area origin
+  const MW = MPW - 80,  MH = MPH - 100;  // draw area size
+  const MCX = MX + MW/2, MCY = MY + MH/2; // center of map
+
+  // Draw area clip + background
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(MX, MY, MW, MH);
+  ctx.clip();
+
+  ctx.fillStyle = 'rgba(0,4,14,0.98)';
+  ctx.fillRect(MX, MY, MW, MH);
+
+  // Grid lines
+  const RANGE = 3500;   // world units visible from center to edge
+  const SCALE = Math.min(MW, MH) / 2 / RANGE;
+
+  const gridStep = 500;   // world units per grid line
+  ctx.strokeStyle = '#4FC3C310'; ctx.lineWidth = 0.5;
+  for (let wx = -RANGE; wx <= RANGE; wx += gridStep) {
+    const sx = MCX + wx * SCALE;
+    ctx.beginPath(); ctx.moveTo(sx, MY); ctx.lineTo(sx, MY+MH); ctx.stroke();
+  }
+  for (let wy = -RANGE; wy <= RANGE; wy += gridStep) {
+    const sy = MCY + wy * SCALE;
+    ctx.beginPath(); ctx.moveTo(MX, sy); ctx.lineTo(MX+MW, sy); ctx.stroke();
+  }
+
+  // Cross-hairs at player center
+  ctx.strokeStyle = '#4FC3C322'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(MCX, MY); ctx.lineTo(MCX, MY+MH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(MX, MCY); ctx.lineTo(MX+MW, MCY); ctx.stroke();
+
+  // ── Asteroids — orange dots ──
+  for (const ast of getAsteroids()) {
+    const dx = (ast.worldX - ship.worldX) * SCALE;
+    const dy = (ast.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
+    const r = Math.max(2, (ast.type ? ast.type.w / 14 : 3));
+    ctx.fillStyle = '#f97316';
+    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, r, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Type label on hover is MVP-deferred; show size hint with opacity
+  }
+
+  // ── Ore pickups — green blips ──
+  for (const o of (typeof orePickups !== 'undefined' ? orePickups : [])) {
+    const dx = (o.worldX - ship.worldX) * SCALE;
+    const dy = (o.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 4 || Math.abs(dy) > MH/2 + 4) continue;
+    ctx.fillStyle = '#22c55e';
+    ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 5;
+    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, 3, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // ── World pods — cyan diamonds ──
+  const podBlink = 0.6 + 0.4 * Math.sin(t * 0.003);
+  for (const pod of worldPods) {
+    const dx = (pod.worldX - ship.worldX) * SCALE;
+    const dy = (pod.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
+    const pCol = (POD_TYPES[pod.type]||{}).color || '#38bdf8';
+    const px = MCX+dx, py = MCY+dy;
+    ctx.save();
+    ctx.globalAlpha = podBlink;
+    ctx.translate(px, py); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = pCol;
+    ctx.shadowColor = pCol; ctx.shadowBlur = 8;
+    ctx.fillRect(-5, -5, 10, 10);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    // Label
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = pCol + 'cc';
+    ctx.textAlign = 'center';
+    ctx.fillText((POD_TYPES[pod.type]||{label:'POD'}).label, MCX+dx, MCY+dy - 11);
+  }
+
+  // ── Home marker (first worldPod or origin) ──
+  const homeX = worldPods.length > 0 ? worldPods[0].worldX : 0;
+  const homeY = worldPods.length > 0 ? worldPods[0].worldY : 0;
+  const hdx = (homeX - ship.worldX) * SCALE;
+  const hdy = (homeY - ship.worldY) * SCALE;
+  if (Math.abs(hdx) <= MW/2 && Math.abs(hdy) <= MH/2) {
+    ctx.fillStyle = '#FFD700';
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12;
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⌂', MCX+hdx, MCY+hdy + 5);
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Player dot (center) ──
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(MCX, MCY, 5, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Direction arrow from player
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2;
+    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.moveTo(MCX + Math.cos(da)*7, MCY + Math.sin(da)*7);
+    ctx.lineTo(MCX + Math.cos(da)*18, MCY + Math.sin(da)*18);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();  // end clip
+
+  // ── Map border ──
+  ctx.strokeStyle = '#4FC3C330'; ctx.lineWidth = 1;
+  ctx.strokeRect(MX, MY, MW, MH);
+
+  // ── Scale bar ──
+  const scalePx = 500 * SCALE;  // 500 world units
+  const sbX = MPX + MPW - 120, sbY = MPY + MPH - 24;
+  ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(sbX, sbY); ctx.lineTo(sbX + scalePx, sbY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sbX, sbY-4); ctx.lineTo(sbX, sbY+4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sbX+scalePx, sbY-4); ctx.lineTo(sbX+scalePx, sbY+4); ctx.stroke();
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C3';
+  ctx.textAlign = 'center';
+  ctx.fillText('500u', sbX + scalePx/2, sbY + 12);
+
+  // ── Legend ──
+  const lx = MPX + 16, ly = MPY + MPH - 72;
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  const legend = [
+    { col:'#ffffff', label:'YOU'      },
+    { col:'#f97316', label:'ASTEROID' },
+    { col:'#38bdf8', label:'POD'      },
+    { col:'#22c55e', label:'ORE'      },
+    { col:'#FFD700', label:'HOME'     },
+  ];
+  legend.forEach((item, i) => {
+    ctx.fillStyle = item.col;
+    ctx.beginPath(); ctx.arc(lx+6, ly + i*16 + 4, 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = item.col + 'aa';
+    ctx.fillText(item.label, lx+16, ly + i*16 + 8);
+  });
+
+  // ── Close hint ──
+  ctx.save();
+  ctx.font = '11px "Courier New", monospace';
+  ctx.fillStyle = '#2a4050';
+  ctx.textAlign = 'center';
+  ctx.fillText('[M]  CLOSE MAP', W/2, MPY + MPH - 10);
+  ctx.restore();
+}
+
+
+// ─── DEV DIAGNOSTICS OVERLAY (F2) ─────────────────────────────────────────────
+// Dev-only. Never shown in player mode. Toggle with F2.
+function drawDiagnostics() {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+  const SAVE_VER  = 'driftbound_save_v1';
+  const BUILD_VER = 'alpha_v0.2';
+
+  const PAD  = 12;
+  const LH   = 16;
+  const PW   = 320;
+  const COL  = '#00ff88';
+  const WARN = '#ffaa00';
+  const ERR  = '#ff4444';
+  const DIM  = '#2a4a3a';
+  const BG   = 'rgba(0,8,4,0.90)';
+
+  // Count DevLog errors/warnings
+  const errCount  = typeof DevLog !== 'undefined' ? DevLog.errorCount : 0;
+  const warnCount = typeof DevLog !== 'undefined'
+    ? DevLog.entries.filter(e=>e.level==='WARNING').length : 0;
+  const failedAssets = typeof DevLog !== 'undefined'
+    ? DevLog.entries.filter(e=>e.message && e.message.includes('ASSET LOAD FAILED')).length : 0;
+
+  // Rows to display
+  const rows = [
+    { label:'BUILD',        val: BUILD_VER,                           col: COL },
+    { label:'SAVE KEY',     val: SAVE_VER,                            col: DIM },
+    { label:'FPS',          val: fpsDisplay,
+      col: fpsDisplay < 30 ? ERR : fpsDisplay < 50 ? WARN : COL },
+    { label:'PLAYER POS',   val: Math.floor(ship.worldX)+' / '+Math.floor(ship.worldY), col: COL },
+    { label:'SHIP DIR',     val: ship.dir.toUpperCase(),              col: COL },
+    { label:'SCENE',        val: mapMode ? 'REGIONAL MAP' : 'FLIGHT', col: COL },
+    { label:'ASSETS TOTAL', val: totalAssets,                         col: COL },
+    { label:'ASSETS LOADED',val: loadedAssets,                        col: loadedAssets === totalAssets ? COL : WARN },
+    { label:'ASSETS FAILED',val: failedAssets,                        col: failedAssets > 0 ? ERR : COL },
+    { label:'LOG ERRORS',   val: errCount,                            col: errCount  > 0 ? ERR  : COL },
+    { label:'LOG WARNINGS', val: warnCount,                           col: warnCount > 0 ? WARN : COL },
+    { label:'FUEL',         val: ship.fuel.toFixed(2)+' / '+FUEL_CAPACITY, col: COL },
+    { label:'HULL',         val: ship.hp+' / '+SHIP_MAX_HP,          col: ship.hp < 30 ? ERR : COL },
+    { label:'ORE',          val: cargoUsed()+' / '+CARGO_LIMIT,      col: COL },
+    { label:'MAP MODE',     val: mapMode ? 'OPEN' : 'CLOSED',        col: COL },
+    { label:'INTERIOR',     val: interiorMode ? 'YES' : 'NO',        col: COL },
+    { label:'THRUST INPUT', val: _thrusting ? 'ON' : 'OFF',           col: _thrusting ? WARN : DIM },
+    { label:'BOOST INPUT',  val: _boosting  ? 'ON' : 'OFF',           col: _boosting  ? WARN : DIM },
+    { label:'ACCEL',        val: _dbgAX.toFixed(3)+' , '+_dbgAY.toFixed(3), col: (_dbgAX||_dbgAY) ? WARN : DIM },
+    { label:'VEL',          val: ship.vx.toFixed(3)+' , '+ship.vy.toFixed(3), col: COL },
+  ];
+
+  const PH = rows.length * LH + PAD * 2 + 8;
+  const px = W - PW - 8, py = 8;
+
+  ctx.save();
+  ctx.fillStyle = BG;
+  roundRect(ctx, px, py, PW, PH, 4); ctx.fill();
+  ctx.strokeStyle = COL + '44'; ctx.lineWidth = 1;
+  roundRect(ctx, px, py, PW, PH, 4); ctx.stroke();
+  ctx.fillStyle = COL; ctx.fillRect(px, py, 2, PH);  // left accent
+
+  let y = py + PAD + LH - 4;
+  ctx.font = '11px "Courier New", monospace';
+
+  // Header
+  ctx.fillStyle = COL;
+  ctx.shadowColor = COL; ctx.shadowBlur = 6;
+  ctx.fillText('DEV DIAGNOSTICS — F2 to close', px + PAD + 4, y);
+  ctx.shadowBlur = 0;
+  y += LH + 2;
+
+  // Separator
+  ctx.strokeStyle = COL + '30'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(px+4, y-8); ctx.lineTo(px+PW-4, y-8); ctx.stroke();
+
+  rows.forEach(row => {
+    const labelCol = DIM, valCol = row.col || COL;
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = labelCol; ctx.fillText(row.label, px + PAD + 4, y);
+    ctx.fillStyle = valCol;
+    ctx.textAlign = 'right';
+    ctx.fillText(String(row.val), px + PW - 8, y);
+    ctx.textAlign = 'left';
+    y += LH;
+  });
+
+  // DEV COMMANDS section (only when DEV_MODE is active)
+  if (typeof DEV_MODE !== 'undefined' && DEV_MODE) {
+    // Extra height is now drawn below the main panel — shift y past the panel
+    const devY0 = py + PH + 6;
+    const devLH = 14;
+    const devCmds = typeof DEV_COMMANDS !== 'undefined' ? Object.values(DEV_COMMANDS) : [];
+    const devPH = devCmds.length * devLH + PAD * 2 + 14;
+
+    ctx.fillStyle = 'rgba(0,8,4,0.90)';
+    roundRect(ctx, px, devY0, PW, devPH, 4); ctx.fill();
+    ctx.strokeStyle = '#ffaa0044'; ctx.lineWidth = 1;
+    roundRect(ctx, px, devY0, PW, devPH, 4); ctx.stroke();
+    ctx.fillStyle = '#ffaa00'; ctx.fillRect(px, devY0, 2, devPH);
+
+    let dy = devY0 + PAD + devLH - 3;
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = '#ffaa00';
+    ctx.shadowColor = '#ffaa00'; ctx.shadowBlur = 4;
+    ctx.fillText('DEV COMMANDS (DEV_MODE ON)', px + PAD + 4, dy);
+    ctx.shadowBlur = 0;
+    dy += devLH + 1;
+    ctx.strokeStyle = '#ffaa0030'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(px+4, dy-6); ctx.lineTo(px+PW-4, dy-6); ctx.stroke();
+
+    devCmds.forEach(cmd => {
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = '#c8a820';
+      ctx.fillText(cmd.label, px + PAD + 4, dy);
+      dy += devLH;
+    });
+  }
+
+  // Bottom hint
+  ctx.fillStyle = DIM;
+  ctx.font = '9px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('DevLog.errors() | DevLog.recent() in console', px + PW/2, py + PH - 5);
+  ctx.textAlign = 'left';
+
+  ctx.restore();
+}
+
+
+function drawDebug(speed) {
+
+  const PAD   = 14;
+
+  const LH    = 14;       // line height
+
+  const COL   = '#00ff88';
+
+  const DIM   = '#00aa55';
+
+  const WARN  = '#ffaa00';
+
+  const ERR   = '#ff4444';
+
+  const FONT  = '10px Courier New';
+
+  const BFONT = 'bold 10px Courier New';
+
+
+
+  // ── Right panel ───────────────────────────────────────────────────────────
+
+  const pw  = 310;
+
+  const ph  = 560;
+
+  const px  = canvas.width - pw - 10;
+
+  const py  = 10;
+
+
+
+  ctx.fillStyle   = '#000000cc';
+
+  ctx.fillRect(px, py, pw, ph);
+
+  ctx.strokeStyle = '#00ff8844';
+
+  ctx.lineWidth   = 1;
+
+  ctx.strokeRect(px, py, pw, ph);
+
+
+
+  let y = py + PAD;
+
+  const lx = px + PAD;
+
+
+
+  function row(label, val, color) {
+
+    ctx.font      = FONT;
+
+    ctx.fillStyle = DIM;
+
+    ctx.fillText(label.padEnd(18), lx, y);
+
+    ctx.fillStyle = color || COL;
+
+    ctx.fillText(String(val), lx + 140, y);
+
+    y += LH;
+
+  }
+
+  function divider(title) {
+
+    y += 4;
+
+    ctx.font      = BFONT;
+
+    ctx.fillStyle = '#00ff8866';
+
+    ctx.fillRect(lx, y - 9, pw - PAD * 2, 1);
+
+    ctx.fillStyle = COL;
+
+    ctx.fillText(title, lx, y);
+
+    y += LH;
+
+  }
+
+
+
+  // Header
+
+  ctx.font      = BFONT;
+
+  ctx.fillStyle = COL;
+
+  ctx.fillText('DRIFTBOUND DEBUG  [F1]', lx, y);
+
+  y += LH;
+
+  row('FPS',         fpsDisplay, fpsDisplay < 30 ? ERR : COL);
+
+  row('FRAME',       frameCount);
+
+  row('PARTICLES',   particles.length);
+
+
+
+  divider('SHIP STATE');
+
+  row('WORLD X',     Math.floor(ship.worldX));
+
+  row('WORLD Y',     Math.floor(ship.worldY));
+
+  row('VEL X',       ship.vx.toFixed(4));
+
+  row('VEL Y',       ship.vy.toFixed(4));
+
+  row('SPEED',       speed.toFixed(4), speed > NORMAL_MAX ? WARN : COL);
+
+  row('DIR',         ship.dir.toUpperCase());
+
+  row('ANIM FRAME',  ship.animFrame);
+
+
+
+  divider('BOOST / FUEL');
+
+  const shiftActive = keys['ShiftLeft'] || keys['ShiftRight'];
+
+  row('SHIFT HELD',  shiftActive ? 'YES' : 'NO', shiftActive ? WARN : DIM);
+
+  row('BOOST RAMP',  ship.boostRamp.toFixed(2), ship.boostRamp > 0 ? WARN : DIM);
+
+  row('EFF CAP',     (NORMAL_MAX + (BOOST_MAX - NORMAL_MAX) * ship.boostRamp).toFixed(2));
+
+  row('FUEL',        ship.fuel.toFixed(4) + ' / ' + FUEL_CAPACITY);
+
+  row('FUEL %',      (ship.fuel / FUEL_CAPACITY * 100).toFixed(1) + '%',
+
+      ship.fuel / FUEL_CAPACITY < 0.2 ? ERR : COL);
+
+  row('MPG',         ship.mpg);
+
+  row('NORMAL CAP',  NORMAL_MAX);
+
+  row('BOOST CAP',   BOOST_MAX);
+
+
+
+  divider('BACKGROUND');
+
+  row('MAP IDX',     currentBgIdx + ' / ' + (BG_SETS.length - 1));
+
+  row('MAP NAME',    BG_SETS[currentBgIdx]);
+
+  row('LAYERS',      bgLayers.length + ' loaded');
+
+  row('NEB TIME',    nebTime);
+
+
+
+  divider('MOUSE');
+
+  row('SCREEN X',    mouseX);
+
+  row('SCREEN Y',    mouseY);
+
+  row('DELTA X',     mouseDX);
+
+  row('DELTA Y',     mouseDY);
+
+
+
+  divider('KEYS HELD');
+
+  const held = Object.keys(keys).filter(k => keys[k]);
+
+  if (held.length === 0) {
+
+    ctx.font = FONT; ctx.fillStyle = DIM;
+
+    ctx.fillText('(none)', lx, y); y += LH;
+
+  } else {
+
+    held.forEach(k => {
+
+      ctx.font = FONT; ctx.fillStyle = WARN;
+
+      ctx.fillText(k, lx, y); y += LH;
+
+    });
+
+  }
+
+
+
+  divider('LAST 8 INPUTS');
+
+  const recent = inputLog.slice(-8);
+
+  recent.forEach(ev => {
+
+    const age = ((Date.now() - ev.t) / 1000).toFixed(1) + 's ago';
+
+    const label = ev.type === 'mouse'
+
+      ? 'mouse  ' + ev.x + ',' + ev.y
+
+      : ev.type + '  ' + ev.code;
+
+    ctx.font      = FONT;
+
+    ctx.fillStyle = ev.type === 'keydown' ? '#88ffcc' : ev.type === 'mouse' ? '#88aaff' : '#ffaa88';
+
+    ctx.fillText(label.substring(0, 28), lx, y);
+
+    ctx.fillStyle = DIM;
+
+    ctx.fillText(age, lx + 200, y);
+
+    y += LH;
+
+  });
+
+}
+
+
+
+// ─── UPDATE ───────────────────────────────────────────────────────────────────
+
+function update() {
+
+  const braking  = keys['Space'];
+
+  // Smooth boost ramp: 0=cruise, 1=full boost
+
+  // Map open: freeze ship movement but keep render loop alive for map draw
+  if (mapMode) {
+    ship.vx *= 0.88;  // gentle bleed-off so ship doesn't fly forever when map closes
+    ship.vy *= 0.88;
+  }
+  const shiftHeld = !mapMode && (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
+
+  // Boost RAMP-UP is gradual (engine spool). Boost END is IMMEDIATE on Shift release:
+  // releasing Shift instantly stops boost acceleration; existing momentum then coasts.
+  if (shiftHeld) {
+    ship.boostRamp = Math.min(1, ship.boostRamp + BOOST_RAMP_UP);
+  } else {
+    ship.boostRamp = 0;                 // immediate — no lingering boost thrust or cap
+  }
+  const boosting = shiftHeld;           // boost state tracks LIVE input (visuals + fuel end at once)
+
+  let ax = 0, ay = 0, thrusting = false;
+  if (!braking) {
+    // Thrust lerps between cruise and boost via ramp; drops to cruise instantly when boost ends.
+    const t = THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp;
+    if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
+    if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
+    if (!mapMode && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
+    if (keys['KeyD'] || keys['ArrowRight']) ax += t;
+    if (ax !== 0 && ay !== 0) { ax *= 0.7071; ay *= 0.7071; }
+    thrusting = (ax !== 0 || ay !== 0);
+  }
+
+  // Coast speed = velocity after damping but BEFORE thrust (pure momentum this frame).
+  const dampF    = braking ? BRAKE : FRICTION;
+  const coastSpd = Math.hypot(ship.vx * dampF, ship.vy * dampF);
+
+  // Integrate: add thrust, then damp.
+  ship.vx = (ship.vx + ax) * dampF;
+  ship.vy = (ship.vy + ay) * dampF;
+
+  const spd = Math.hypot(ship.vx, ship.vy);
+  // Thrust may not push speed above the CURRENT mode cap, but must never force existing
+  // momentum below what pure coasting gives — so ending boost coasts down, never snaps.
+  const modeCap = boosting ? BOOST_MAX : NORMAL_MAX;
+  const allowed = Math.max(modeCap, coastSpd);
+  if (spd > allowed && spd > 0.0001) {
+    ship.vx = (ship.vx / spd) * allowed;
+    ship.vy = (ship.vy / spd) * allowed;
+  }
+
+  // Expose per-frame acceleration for the F2 debug readout.
+  _dbgAX = ax; _dbgAY = ay;
+
+  if (Math.hypot(ship.vx, ship.vy) < 0.01) { ship.vx = 0; ship.vy = 0; }
+
+  // ─── COLLISION DETECTION ───────────────────────────────────────────────────────────
+
+  if (ship.iframes > 0) {
+
+    ship.iframes--;
+
+  } else {
+
+    for (const ast of getAsteroids()) {
+      if (!ast.type || !ast.type.w) continue;  // skip if not yet rehydrated
+
+      const dx   = ast.worldX - ship.worldX;
+
+      const dy   = ast.worldY - ship.worldY;
+
+      const astR = Math.max(ast.type.w, ast.type.h) * (ast.type.scale || AST_SCALE) * 0.38;
+
+      const minD = COLLISION_RADIUS + astR;
+
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < minD && dist > 0.001) {
+
+        const nx = dx / dist, ny = dy / dist;
+
+        const dot = ship.vx * nx + ship.vy * ny;
+
+        ship.vx -= (1 + COLLISION_BOUNCE) * dot * nx;
+
+        ship.vy -= (1 + COLLISION_BOUNCE) * dot * ny;
+
+        ship.worldX -= nx * (minD - dist) * 0.6;
+
+        ship.worldY -= ny * (minD - dist) * 0.6;
+
+        ship.hp      = Math.max(0, ship.hp - COLLISION_DAMAGE);
+
+        ship.iframes = COLLISION_IFRAMES;
+
+        ship.hitFlash = 18;
+        addCamShake(8);
+
+        showToast('HULL DAMAGE  │  ' + ship.hp + ' / ' + SHIP_MAX_HP);
+
+        break;
+
+      }
+
+    }
+
+  }
+
+  if (ship.hitFlash > 0) ship.hitFlash--;
+
+  // ─── PVP COLLISION ──────────────────────────────────────────────────────────
+  if (multiMode && ship.pvpIframes <= 0) {
+    for (const [rpid, rp] of Object.entries(remotePlayers)) {
+      const dx   = rp.worldX - ship.worldX;
+      const dy   = rp.worldY - ship.worldY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < PVP_COLLISION_R && dist > 0.001) {
+        const nx = dx / dist, ny = dy / dist;
+        const dot = ship.vx * nx + ship.vy * ny;
+        // Bounce local ship away
+        ship.vx -= (1 + PVP_BOUNCE) * dot * nx;
+        ship.vy -= (1 + PVP_BOUNCE) * dot * ny;
+        ship.worldX -= nx * (PVP_COLLISION_R - dist) * 0.5;
+        ship.worldY -= ny * (PVP_COLLISION_R - dist) * 0.5;
+        // Take damage locally
+        ship.hp         = Math.max(0, ship.hp - PVP_DAMAGE);
+        ship.pvpIframes = PVP_IFRAMES;
+        ship.hitFlash   = 22;
+        addCamShake(8);
+        showToast('COLLISION — ' + rp.name + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
+        // Tell server — so rp's client also takes damage
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'player_hit', target: rpid, damage: PVP_DAMAGE }));
+        }
+        break;
+      }
+    }
+  }
+  if (ship.pvpIframes > 0) ship.pvpIframes--;
+
+
+
+
+
+
+  ship.worldX += ship.vx;
+
+  ship.worldY += ship.vy;
+
+
+
+  if (spd > SPEED_THRESH) ship.dir = velToDir(ship.vx, ship.vy);
+
+
+
+  // Fuel burns whenever Shift + a movement direction is held (actively accelerating under
+  // boost). Holding Shift with no direction pressed costs nothing — you must be thrusting.
+  // Power curve: speed^1.4 -- low speed barely sips, high speed drinks hard.
+
+  if (shiftHeld && thrusting) {
+
+    const cur = Math.hypot(ship.vx, ship.vy);
+
+    const burnRate = Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
+
+    ship.fuel = Math.max(0, ship.fuel - burnRate);
+
+  }
+
+
+
+  _thrusting = thrusting;
+  _boosting  = shiftHeld;
+  if (typeof multiMode !== "undefined" && multiMode) sendMove();
+  return Math.hypot(ship.vx, ship.vy);
+
+}
+
+
+
+// ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+
+function loop(now) {
+
+  // Identity transform every frame: no leaked/partial world transform from a prior
+  // frame can survive into this one (the world zoom uses its own save/restore below).
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+
+  // Interior fade state machine. Advances in BOTH flight and interior so the exit
+  // fade keeps progressing while interiorMode is still true.
+  if (interiorFadeDir === 1) {
+    interiorFade = Math.min(1, interiorFade + FADE_SPEED);
+    if (interiorFade >= 1) { interiorMode = true; interiorFadeDir = 0; }
+  } else if (interiorFadeDir === -1) {
+    interiorFade = Math.max(0, interiorFade - FADE_SPEED);
+    if (interiorFade <= 0) { interiorMode = false; interiorFadeDir = 0; interiorPodIdx = -1; }
+  }
+
+  // ── INTERIOR MODE: self-contained render path (no world/flight update or draw) ──
+  if (interiorMode) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    updateInteriorPlayer();
+    drawInterior();
+    if (interiorFade < 1) {                     // exit fade: darken interior toward black
+      ctx.fillStyle = `rgba(0,0,0,${1 - interiorFade})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    drawToast();
+    if (debugMode) drawDebug(0);
+    if (diagMode)  drawDiagnostics();
+    eEdge = false;
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const speed = update();
+
+  updateMining();
+
+  // ── Camera: smooth lead + shake ──────────────────────────────────────────
+  // Lead eases toward velocity direction — makes space feel responsive.
+  // Shake decays quickly after impacts and boost-start.
+  const CAM_LEAD = 18, CAM_LAG = 0.09;
+  camLeadX += (ship.vx * CAM_LEAD - camLeadX) * CAM_LAG;
+  camLeadY += (ship.vy * CAM_LEAD - camLeadY) * CAM_LAG;
+  camShakeX *= 0.74; camShakeY *= 0.74;
+
+  // Zoom easing toward the selected level (world only)
+  camZoomTarget = ZOOM_LEVELS[camZoomIdx];
+  camZoom += (camZoomTarget - camZoom) * ZOOM_LERP;
+
+  // Boost-start: camera jolt + orange flare particle burst
+  const _curBoosting = _boosting && ship.fuel > 0;
+  if (_curBoosting && !_prevBoosting) {
+    addCamShake(6);
+    const _fBackIdx = (DIRS.indexOf(ship.dir) + 4) % 8;
+    const _fBackRad = DIR_ANGLES_DEG[_fBackIdx] * Math.PI / 180;
+    const _fpx = canvas.width/2 + Math.cos(_fBackRad) * DISPLAY_SIZE * 0.38;
+    const _fpy = canvas.height/2 + Math.sin(_fBackRad) * DISPLAY_SIZE * 0.38;
+    for (let _bi = 0; _bi < 10; _bi++) {
+      const _ang = _fBackRad + (Math.random()-0.5) * 1.4;
+      const _spd = 2 + Math.random() * 3.5;
+      particles.push({ x:_fpx, y:_fpy,
+        vx:Math.cos(_ang)*_spd, vy:Math.sin(_ang)*_spd,
+        life:1.0, decay:0.07+Math.random()*0.06, size:2+Math.random()*2.5,
+        color: Math.random() < 0.6 ? '#ff8820' : '#ffdd44' });
+    }
+  }
+  _prevBoosting = _curBoosting;
+
+  const cx = Math.round(canvas.width  / 2 - camLeadX + camShakeX);
+
+  const cy = Math.round(canvas.height / 2 - camLeadY + camShakeY);
+
+
+
+  // FPS counter
+
+  frameCount++;
+
+  fpsCounter++;
+
+  if (now - fpsTimer >= 1000) {
+
+    fpsDisplay = fpsCounter;
+
+    fpsCounter = 0;
+
+    fpsTimer   = now;
+
+  }
+
+
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+
+
+  drawBG(ship.worldX, ship.worldY);
+  drawStars(ship.worldX, ship.worldY);
+
+  // ── WORLD ZOOM TRANSFORM (world only; scales around screen center) ──
+  ctx.save();
+  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
+    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  ctx.imageSmoothingEnabled = false;  // keep pixel sprites crisp under zoom
+
+  tickDebris();
+  drawDebris(cx, cy);
+
+
+  drawAsteroids(cx, cy);
+
+  drawWorldPods(cx, cy);
+  drawAttachedPods(cx, cy);
+  drawMiningLaser(cx, cy);
+
+  drawOrePickups(cx, cy);
+  drawRemotePlayers(cx, cy);
+
+
+
+  if (speed > SPEED_THRESH) spawnThrust(cx, cy, ship.dir, speed);
+
+  tickParticles();
+  tickAutoSave();
+
+  drawParticles();
+
+  ctx.restore();  // ── END WORLD ZOOM (block A) ──
+
+  // Hit flash (full-screen UI overlay — NOT zoomed)
+
+  if (ship.hitFlash > 0) {
+
+    ctx.globalAlpha = (ship.hitFlash / 18) * 0.30;
+
+    ctx.fillStyle = '#ff1010';
+
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.globalAlpha = 1;
+
+  }
+
+  // Ship drawn under the same world zoom so it scales with the world
+  ctx.save();
+  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
+    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  ctx.imageSmoothingEnabled = false;
+  drawShip(cx, cy, now, speed);
+  ctx.restore();
+
+  // DEV transform-leak assertion: HUD must render in identity screen space.
+  // If the world zoom/translation is still active here, it leaked past a restore.
+  if (DEV_MODE) {
+    const _tm = ctx.getTransform();
+    const _leak = Math.abs(_tm.a - 1) > 0.001 || Math.abs(_tm.d - 1) > 0.001 ||
+                  Math.abs(_tm.b) > 0.001 || Math.abs(_tm.c) > 0.001 ||
+                  Math.abs(_tm.e) > 0.5   || Math.abs(_tm.f) > 0.5;
+    if (_leak && !_hudLeakLogged) {
+      _hudLeakLogged = true;
+      console.error('CRITICAL: WORLD TRANSFORM LEAKED INTO HUD', _tm);
+      DevLog.error('HUD', 'CRITICAL: WORLD TRANSFORM LEAKED INTO HUD',
+        `a=${_tm.a.toFixed(3)} d=${_tm.d.toFixed(3)} e=${_tm.e.toFixed(1)} f=${_tm.f.toFixed(1)}`);
+    }
+  }
+
+  drawHUD(speed);
+  drawMinimap();
+
+  // ── INTERIOR FADE-IN OVERLAY (flight path only) ──
+  // The fade machine and interior render live at the top of loop(); here we only
+  // darken the world while a fade-IN is in progress (interiorMode not yet true).
+  if (interiorFadeDir === 1) {
+    ctx.fillStyle = `rgba(0,0,0,${interiorFade})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  drawToast();
+
+  // Regional map overlay — rendered last so it covers everything
+  if (mapMode) drawRegionalMap();
+
+
+
+  if (debugMode) drawDebug(speed);
+  if (diagMode)  drawDiagnostics();
+
+  eEdge = false;
+  requestAnimationFrame(loop);
+
+}
+
+
+
+// ─── SAVE / LOAD ─────────────────────────────────────────────────────────────
+
+const SAVE_KEY = 'driftbound_save_v1';
+
+function saveGame() {
+  const data = {
+    worldX:       ship.worldX,
+    worldY:       ship.worldY,
+    ore:          ship.ore,
+    mineral:      ship.mineral,
+    armalcolite:  ship.armalcolite,
+    fuel:         ship.fuel,
+    hp:           ship.hp,
+    cargoLimit:   ship.shipType.cargoLimit,
+    attachedPods: attachedPods.map(p => p.pid),
+    worldPodsLeft: worldPods.map(p => p.pid),
+    savedAt:      Date.now(),
+    username:     localStorage.getItem('driftbound_username') || null,
+  };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e) { console.warn('Save failed:', e); DevLog.error('SaveSystem', 'saveGame failed', e?.message||String(e)); }
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) { DevLog.info('SaveSystem','No save found — fresh start'); return false; }
+    const data = JSON.parse(raw);
+
+    ship.worldX       = data.worldX       || 0;
+    ship.worldY       = data.worldY       || 0;
+    ship.ore          = data.ore          || 0;
+    ship.mineral      = data.mineral      || 0;
+    ship.armalcolite  = data.armalcolite  || 0;
+    ship.fuel         = data.fuel         ?? FUEL_CAPACITY;
+    ship.hp           = data.hp           ?? 100;
+
+    // Restore cargo limit (pod bonuses)
+    if (data.cargoLimit && data.cargoLimit > CARGO_LIMIT) {
+      ship.shipType.cargoLimit = data.cargoLimit;
+    }
+
+    // Restore attached pods
+    if (data.attachedPods) {
+      data.attachedPods.forEach(pid => {
+        // Find which pod type this was
+        const wpod = worldPods.find(p => p.pid === pid);
+        if (wpod) {
+          attachedPods.push({ ...POD_TYPES[wpod.type], pid });
+        }
+      });
+    }
+
+    // Remove world pods that were already collected
+    if (data.worldPodsLeft) {
+      for (let i = worldPods.length - 1; i >= 0; i--) {
+        if (!data.worldPodsLeft.includes(worldPods[i].pid)) {
+          worldPods.splice(i, 1);
+        }
+      }
+    }
+
+    return true;
+  } catch(e) {
+    console.warn('Load failed:', e);
+    DevLog.error('SaveSystem', 'loadGame failed — save may be corrupt', e?.message||String(e));
+    return false;
+  }
+}
+
+function deleteSave() {
+  localStorage.removeItem(SAVE_KEY);
+  showToast('SAVE DELETED — RELOADING...', '#ef4444');
+  setTimeout(() => location.reload(), 1500);
+}
+
+// Auto-save every 30 seconds + on key events
+let _autoSaveTimer = 0;
+function tickAutoSave() {
+  _autoSaveTimer++;
+  if (_autoSaveTimer >= 1800) {   // 30s at 60fps
+    _autoSaveTimer = 0;
+    saveGame();
+  }
+}
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+
+// ─── STARTUP HEALTH CHECK ──────────────────────────────────────────────────
+function runHealthCheck() {
+  const issues = [];
+
+  // Canvas
+  if (!canvas || !ctx)
+    issues.push({ level:'CRITICAL', msg:'Canvas or 2D context missing' });
+
+  // Ship type definition
+  if (!SHIP_TYPE || typeof SHIP_TYPE.name !== 'string')
+    issues.push({ level:'ERROR', msg:'SHIP_TYPE not defined correctly', ctx: typeof SHIP_TYPE });
+
+  // Asteroid type definitions
+  if (!Array.isArray(ASTEROID_TYPES) || ASTEROID_TYPES.length === 0)
+    issues.push({ level:'ERROR', msg:'ASTEROID_TYPES empty or missing' });
+
+  // Pod type definitions
+  if (!POD_TYPES || Object.keys(POD_TYPES).length === 0)
+    issues.push({ level:'ERROR', msg:'POD_TYPES empty or missing' });
+
+  // World asteroids
+  try {
+    const asts = getAsteroids();
+    if (!asts || asts.length === 0)
+      issues.push({ level:'WARNING', msg:'No asteroids spawned at startup' });
+    else
+      DevLog.info('HealthCheck', `World asteroids spawned: ${asts.length}`);
+  } catch(e) {
+    issues.push({ level:'ERROR', msg:'getAsteroids() threw', ctx: e?.message });
+  }
+
+  // Ship state
+  if (typeof ship.worldX !== 'number' || typeof ship.worldY !== 'number')
+    issues.push({ level:'CRITICAL', msg:'Ship position not initialized' });
+  if (typeof ship.fuel !== 'number' || isNaN(ship.fuel))
+    issues.push({ level:'ERROR', msg:'Ship fuel is NaN/missing', ctx: ship.fuel });
+  if (typeof ship.hp !== 'number' || isNaN(ship.hp))
+    issues.push({ level:'ERROR', msg:'Ship HP is NaN/missing', ctx: ship.hp });
+
+  // Fuel capacity constant
+  if (typeof FUEL_CAPACITY !== 'number' || FUEL_CAPACITY <= 0)
+    issues.push({ level:'ERROR', msg:'FUEL_CAPACITY invalid', ctx: FUEL_CAPACITY });
+
+  // localStorage availability
+  try {
+    const _k = '__db_healthcheck__';
+    localStorage.setItem(_k, '1');
+    localStorage.removeItem(_k);
+  } catch(e) {
+    issues.push({ level:'ERROR', msg:'localStorage unavailable — saves will fail', ctx: e?.message });
+  }
+
+  // Background images (warn if none loaded; normal to be null on first frame)
+  const bgReady = _bgImgs.filter(x => x !== null).length;
+  if (bgReady === 0)
+    DevLog.info('HealthCheck', 'BG images not yet loaded (normal — async load in progress)');
+
+  // Report
+  const errorCount = issues.filter(i=>i.level==='ERROR'||i.level==='CRITICAL').length;
+  const warnCount  = issues.filter(i=>i.level==='WARNING').length;
+
+  if (issues.length === 0) {
+    DevLog.info('HealthCheck', 'All systems nominal', {
+      shipType: SHIP_TYPE?.name, asteroidTypes: ASTEROID_TYPES?.length,
+      podTypes: Object.keys(POD_TYPES||{}).length,
+    });
+  } else {
+    issues.forEach(i => {
+      if      (i.level==='CRITICAL') DevLog.critical('HealthCheck', i.msg, i.ctx);
+      else if (i.level==='ERROR')    DevLog.error   ('HealthCheck', i.msg, i.ctx);
+      else                           DevLog.warn    ('HealthCheck', i.msg, i.ctx);
+    });
+  }
+
+  const summary = issues.length === 0
+    ? 'OK — no issues'
+    : `${errorCount} error(s), ${warnCount} warning(s)`;
+  console.log(`[DRIFTBOUND] Startup health check: ${summary}. Inspect: DevLog.dump()`);
+}
+
+
+async function boot() {
+
+  await loadAll();
+
+  initAsteroids();
+
+  // Restore saved progress
+  const hadSave = loadGame();
+  if (hadSave) showToast('GAME LOADED', '#22c55e');
+
+  document.getElementById('loading').style.display = 'none';
+
+  if (debugMode) drawDebug(speed);
+
+  _initStars();
+  initDebris();
+  _initBG();
+  runHealthCheck();
+
+  // Catch uncaught JS exceptions during the game loop and surface them to DevLog
+  const _prevOnError = window.onerror;
+  window.onerror = function(msg, src, line, col, err) {
+    DevLog.critical('RuntimeError', String(msg), { src, line, col, stack: err?.stack });
+    if (typeof _prevOnError === 'function') _prevOnError(msg, src, line, col, err);
+    return false; // don't suppress default browser reporting
+  };
+
+  requestAnimationFrame(loop);
+
+  // RUNTIME READY check — runs 800 ms after loop starts to catch first-frame crashes
+  setTimeout(function _runtimeReadyCheck() {
+    const critSinceStart = DevLog.entries.filter(
+      e => (e.level === 'CRITICAL' || e.level === 'ERROR') && e.system === 'RuntimeError'
+    );
+    if (critSinceStart.length === 0) {
+      DevLog.info('HealthCheck', 'RUNTIME READY: PASS — no uncaught exceptions in first 800 ms');
+      console.log('[DRIFTBOUND] RUNTIME READY: PASS');
+    } else {
+      const first = critSinceStart[0];
+      DevLog.critical('HealthCheck',
+        'RUNTIME READY: FAIL — ' + critSinceStart.length + ' uncaught exception(s)',
+        { first: first.message, ctx: first.ctx });
+      console.error('[DRIFTBOUND] RUNTIME READY: FAIL', critSinceStart);
+    }
+  }, 800);
+
+}
+
+
+
+// Press ESC in lobby to play solo
+document.addEventListener('keydown', e => {
+  if (e.code === 'Delete' && confirm('Delete save data and reset?')) { deleteSave(); return; }
+  if (e.key === 'Escape') {
+    const lobby = document.getElementById('lobby');
+    if (lobby && lobby.style.display !== 'none') {
+      lobby.style.display = 'none';
+      showToast('Solo mode — no server connected', '#64748b');
+    }
+  }
+});
+
+boot();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRIFTBOUND MULTIPLAYER CLIENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+var socket        = null;  // var avoids TDZ with lobbyConnect
+let myPid         = null;
+let myColor       = '#00ff88';
+let remotePlayers = {};
+let serverAsteroids = {};
+let serverOres    = {};
+let multiMode     = false;
+let serverTick    = 0;
+
+function lobbyConnect() {
+  const name = (document.getElementById('lobby-name').value || 'Pilot').trim();
+  if (name && name !== 'Pilot') localStorage.setItem('driftbound_username', name);
+  const rawInput = (document.getElementById('lobby-ip').value || '').trim();
+  // Strip any protocol, trailing slashes, and port remnants from autofill
+  const ipInput = rawInput
+    .replace(/^wss?:\/\//, '')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')   // strip any path after host
+    .trim();
+  const autoHost = window.location.hostname;
+  const ip = ipInput || autoHost;
+  const port = window.location.port;
+  const isLocal = ip === 'localhost' || ip.startsWith('192.') || ip.startsWith('10.') || ip.startsWith('127.');
+  // On Render (or any non-local host) use wss:// on the same host, no explicit port
+  // Locally use ws:// with the dev port
+  const url = isLocal
+    ? 'ws://' + ip + ':' + (port || '8080') + '/ws'
+    : 'wss://' + ip + '/ws';
+  console.log('[DB] lobbyConnect() called');
+  console.log('[DB] window.location.hostname =', autoHost);
+  console.log('[DB] rawInput =', JSON.stringify(rawInput));
+  console.log('[DB] ipInput (cleaned) =', JSON.stringify(ipInput));
+  console.log('[DB] ip resolved =', ip);
+  console.log('[DB] isLocal =', isLocal);
+  console.log('[DB] WebSocket URL =', url);
+  setLobbyStatus('Connecting to ' + url + '...');
+  try { socket = new WebSocket(url); } catch(e) {
+    console.error('[DB] WebSocket constructor threw:', e.message);
+    setLobbyStatus('Invalid address.'); return;
+  }
+  socket.onopen = () => {
+    console.log('[DB] socket.onopen — connected, sending join');
+    socket.send(JSON.stringify({ type: 'join', name }));
+  };
+  socket.onmessage = (ev) => {
+    console.log('[DB] socket.onmessage:', ev.data.slice(0, 120));
+    handleServerMsg(JSON.parse(ev.data));
+  };
+  socket.onerror = (e) => {
+    console.error('[DB] socket.onerror fired');
+    console.error('[DB] readyState:', socket ? socket.readyState : 'null');
+    setLobbyStatus('Could not connect. Press ESC or click PLAY SOLO to play offline.');
+    socket = null;
+  };
+  socket.onclose = (e) => {
+    console.warn('[DB] socket.onclose — code:', e.code, '| reason:', e.reason, '| wasClean:', e.wasClean);
+    if (multiMode) showToast('Disconnected from server', '#ef4444');
+    multiMode = false; socket = null;
+  };
+}
+
+function setLobbyStatus(msg) {
+  document.getElementById('lobby-status').textContent = msg;
+}
+
+function handleServerMsg(msg) {
+  switch (msg.type) {
+    case 'init':
+      myPid   = msg.pid;
+      myColor = msg.color;
+      multiMode = true;
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      document.getElementById('lobby').style.display = 'none';
+      showToast('Connected as ' + msg.name, myColor);
+      break;
+
+    case 'state':
+      remotePlayers = {};
+      for (const p of msg.players) { if (p.pid !== myPid) remotePlayers[p.pid] = p; }
+      serverAsteroids = {};
+      for (const a of msg.asteroids) serverAsteroids[a.aid] = rehydrateAsteroid(a);
+      serverOres = {};
+      for (const o of msg.ores) serverOres[o.oid] = o;
+      break;
+
+    case 'player_joined':
+      if (msg.player.pid !== myPid) { remotePlayers[msg.player.pid] = msg.player; showToast('⚡ ' + msg.player.name + ' entered the drift', '#38bdf8'); }
+      break;
+
+    case 'player_move':
+      if (msg.pid !== myPid) {
+        remotePlayers[msg.pid] = msg.player;
+      } break;
+
+    case 'player_left':
+      delete remotePlayers[msg.pid];
+      showToast('❖ ' + msg.name + ' disconnected', '#64748b');
+      break;
+
+    case 'asteroid_hit':
+      if (serverAsteroids[msg.aid]) serverAsteroids[msg.aid].hp = msg.hp;
+      break;
+
+    case 'asteroid_destroyed':
+      delete serverAsteroids[msg.aid];
+      serverOres[msg.oid] = msg.ore;
+      serverAsteroids[msg.new_ast.aid] = rehydrateAsteroid(msg.new_ast);
+      break;
+
+    case 'asteroid_sync':
+      for (const a of msg.asteroids) {
+        if (serverAsteroids[a.aid]) {
+          serverAsteroids[a.aid].worldX = a.worldX;
+          serverAsteroids[a.aid].worldY = a.worldY;
+          serverAsteroids[a.aid].angle  = a.angle;
+          rehydrateAsteroid(serverAsteroids[a.aid]);
+        } else {
+          // New asteroid we don't have yet — add and rehydrate
+          serverAsteroids[a.aid] = rehydrateAsteroid(a);
+        }
+      }
+      break;
+
+    case 'ore_collected':
+      delete serverOres[msg.oid];
+      ship.ore = msg.totals.ore; ship.mineral = msg.totals.mineral; ship.armalcolite = msg.totals.armalcolite;
+      if (msg.loot === 'mineral')      showToast('❖ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
+      else if (msg.loot === 'armalcolite') showToast('◈ ARMALCOLITE extracted (' + ship.armalcolite + ' held)', '#34d399');
+      break;
+
+    case 'ore_gone':
+      delete serverOres[msg.oid];
+      break;
+
+    case 'refined':
+      ship.fuel = msg.fuel; ship.armalcolite = msg.armalcolite;
+      showToast('REFINED ARMALCOLITE → +2.0 FUEL  (' + ship.fuel.toFixed(1) + ')', '#34d399');
+      break;
+
+    case 'player_hit':
+      if (msg.pid === myPid) {
+        ship.hp         = Math.max(0, ship.hp - (msg.damage || PVP_DAMAGE));
+        ship.pvpIframes = PVP_IFRAMES;
+        ship.hitFlash   = 22;
+        addCamShake(8);
+        const attacker  = remotePlayers[msg.by];
+        const aName     = attacker ? attacker.name : 'enemy';
+        showToast('HIT BY ' + aName + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
+      }
+      break;
+  }
+}
+
+let _lastSend = 0;
+let _thrusting = false;
+let _boosting  = false;
+let _dbgAX     = 0, _dbgAY = 0;   // last-frame accel (F2 debug readout)
+let _ePressed  = false;
+let eEdge      = false;
+
+// ── INTERIOR SYSTEM ──────────────────────────────────────────
+// ── COMBAT & POD STATE ────────────────────────────────────────────────
+// Pod secured state: 0=unknown, 1=hostile(drone inside), 2=secured
+// For MVP the first attached pod starts as hostile until cleared
+const POD_STATE_HOSTILE  = 1;
+const POD_STATE_SECURED  = 2;
+let   podSecured = false;   // true once drone is defeated
+
+// ── DRONE (interior enemy) ────────────────────────────────────────────
+let drone = null;   // null = not spawned
+const DRONE_HP_MAX   = 40;
+const DRONE_SPEED    = 0.045;
+const DRONE_ATTACK_R = 0.9;     // tile distance to deal damage
+const DRONE_DMG      = 8;       // damage per hit to player
+const DRONE_FIRE_CD  = 90;      // frames between attacks
+let   droneFireTimer = 0;
+let   droneAlertFlash= 0;
+
+// ── PLAYER COMBAT STATS ───────────────────────────────────────────────
+let playerHP     = 100;
+const PLAYER_HP_MAX = 100;
+let   playerInvTimer = 0;   // invincibility frames after hit
+const PLAYER_INV_DUR = 40;
+
+// ── WEAPON (Armory reward) ────────────────────────────────────────────
+// weapon = null (no weapon), or { type:'pulse_rifle', ammo:24, maxAmmo:24 }
+let weapon = null;
+const WEAPON_PICKUP_POS = {col:4, row:3};  // centre of room, near weapon rack
+let   weaponPickedUp = false;
+let   weaponGlow = 0;   // sine glow counter for pickup sprite
+
+// ── PROJECTILES ───────────────────────────────────────────────────────
+const projectiles = [];   // { x, y, vx, vy, owner:'player'|'drone', life }
+
+// ── SHOOT COOLDOWN ────────────────────────────────────────────────────
+let shootCooldown = 0;
+const SHOOT_CD    = 18;   // frames between shots
+const PROJ_SPEED  = 0.22;
+const PROJ_LIFE   = 60;
+
+let interiorMode   = false;   // true when player is inside a pod
+let interiorPodIdx = -1;      // which attachedPods[] we're in
+let interiorFade   = 0;       // 0=space, 1=interior (tweens 0↔1)
+let interiorFadeDir= 0;       // +1 fading in, -1 fading out, 0 idle
+const FADE_SPEED   = 0.04;
+
+// player interior position (tile coords)
+let iPlayerX = 4.5, iPlayerY = 5.5;  // center of room
+const I_SPEED = 0.08;
+const TILE    = 64;
+
+// tileset image
+const tilesetImg = new Image();
+tilesetImg.src = 'data:image/png;base64,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ABCQBgAAAtIAAEBAGgAACEgDAAABaQAAICANAAAEpAEAgIA0AAAQkAYAAALSAABAQBoAAAhIAwAAAWkAACAgDQAABKQBAICANAAAEJAGAAAC0gAAQEAaAAAISAMAAAFpAAAgIA0AAASkAQCAgDQAABCQBgAAAtIAAEBAGgAACEgDAAABaQAAICANAAAEpAEAgIA0AAAQkAYAAALSAABAQBoAAAhIAwAAAWkAACAgDQAABKQBAICANAAAEJAGAAAC0gAAQEAaAAAISAMAAAFpAAAgIA0AAASkAQCAgDQAABCQBgAAAtIAAEBAGgAACEgDAAABaQAAICANAAAEpAEAgIA0AAAQkAYAAALSAABAQBoAAAhIAwAAAWkAACAgDQAABKQBAICANAAAEJAGAAAC0gAAQEAaAAAISAMAAAFpAAAgIA0AAASkAQCAgDQAABCQBgAAAtIAAEBAGgAACEgDAAABaQAAICANAAAEpAEAgIA0AAAQkAYAAALSAABAQJ3HHntsNaWU9uzZ03QtEzU/P59SSmn37t0ppZQ++9nPrvu4P/iDP0gppfToo49OprAR+f73v59SSumxxx5b9/OvvPJKSiml119/vTOxogDYNCQAABBQt/gf165da7KOxp09ezallNL27dvX/fxbb701yXJG5oMPPmi6BAA2IQkAAATUrX/I5rK6uloadzqjWcKumvkDQBtJAAAgoKETgHwGXrh161ZpvGXL+r3FsDP2qufLP7/RJOC9997r+/2vXLmyoe/flKrrAiA2CQAABDRwAlDMhPOZfpXicVVJwKCKmX1d8lA8z90mATt37iyNixn/RuvPbd26dajH37x5c0Pf//r16ymllO69997Sx8+fPz/U9wWgXSQAABBQbQJQtwZfqJsp5zP5QWfqefJQlwQMO8OetGFn9Lni+qv+O270+wMQgwQAAAIaeA/ARnf55zP3qhls/rjieav2HhRfX9RTzIBHnQSM6/yBQZ+3+Ldqht/tdkuPm1R9AEwnCQAABDT0OQAb3RU/6N0Bg65lV82Mxz0TrtsbUXX3wrB7H/J/c5t9zwMAm5MEAAACqkwA8t33g87862beozoXoJj5FjP/uvMCNqpur8Kg6v77VM3884SjuH5r/QDcDQkAAARUuwdg1Cfh5fIZcT7Dv3HjRunjhar7/sc9I666m6Hq+auSiUH3KFRd50ZPPgQgNgkAAAQ09F0AdQadkeYn++Vr2vn9/YPuuh+1Qdfs85n6sLv9q9jlD8A4SAAAIKA7EoCqd/0b9Kz/us9XrZlXvatffsJf/vFJn8hXyE8oHLaePFlo6qRBAGKSAABAQCPfA1Aln+EO+l4Cxbg4636zya+jbs9A1Xsb1F2fRACAUZIAAEBAd0w78zX2QVWtYTf97nSjfv66dyfM71qoOskv3zMwqpMGAWAQEgAACKhy4XnYs/WrZthNz/yLkwSLNfZR1TNsslDM+PNk5W7/u9XdNVD3LoIAxCYBAICAarfWb/bd54POcIs1+Lu9m6Bqb0S+F6AY1+2BGPa/a9WMvuq9FACgHwkAAAS0OW+uH0A+Ey7W+gv5Lvu7XQu/2xl11cz8bmf+xfXliUPVuyhKBADoRwIAAAGNPQGomnmP+r78qufd6P31dfUXSUP+ngCDfp9Bnz9/98T884O+ayIApCQBAICQhk4ABn3XurqZ6KiSgap31RvV7vsq+ffJ194HvQ9/0F38edJQ9XOw5g/AICQAABDQyPcA5GvWuXyNPD8jP59JDyqfAedr46M+ATAfV70rYNV/h/xxVbv4C3kCMGidEgEA1iMBAICABk4Aipl6MQMd9kS9fEY86Jn4dd+nmDFX3R8/Kvn9+PmMfdjd91Uz+qrvU7X2X/V1Zv4A9CMBAICAaqfxVWvcdepmuPmZ+VVr6Her+PoiubjbvQWDvute1efrdu/nj6u6a6H4fHE9VXc/FJ8f9d4HANpFAgAAAVUmAFUzzfzzdXsB6pKAqhlq3cl6+cfrZsj5noFB5TPqvP66PQ1V5xLkdz/Ufd98z0Hd11eNASAlCQAAhHTH9H3QE+zyx9etNd/tHoJC3fcf9y74QU88rJqZVz1+WHmCkSce+ceHvVsDgBgkAAAQUO30sGoXet3jNzrTHXYGX3dC3rAJRCGfcVftaaja5Z8/Ll/Tr9qtX7XnYNAkxO5/APqRAABAQLUJQDGDze/b36iqpKDqPvsiech3wxfudoZfp2qNveq/Q37XQa7uJL/866vOTahj9z8A/UgAACCgygSgaiZetcadz8irvv5uz/zPny9fOx/3mnfdiYhVa/Z19+VXnSNQdf11M/tJ/fcAYLpJAAAgoDsSgLoT5wY9gz7/fnVr5lUfz+8+yB9fvDvf3Z71X1haWlr34/n1V90FUXd3RC6f4W/0BL+6/85V1wdATBIAAAio9i6A/P3uBz0HYFSqdv2P2qc//el1P/79739/rM87qt36+fe55557UkrV1/XBBx+M5HkBmE4SAAAIqDYByGf+dfexF/9udE1+0Ocvzrrf6PPUrZF/9KMf7fv5QROK4jrq3tWv6sz/uucvHreyspJSsvYPwPokAAAQ0MDvBVDMtPPd/lX35Y9K/vxNGdUehPz7DPp9R/04AGKTAABAQJ3PfOYzoQ+Nn5mZabqERr355puODAQISAIAAAH9fz3Kt5MtHyHiAAAAAElFTkSuQmCC';
+
+// Interior room map for an Armory pod (9×9 tiles)
+// Tile IDs (row*8 + col in tileset, 0-indexed):
+//   WALL variants drawn procedurally — we use solid colour tiles for now
+//   0  = void/nothing (skip draw)
+//   1  = floor (dark metal panel — tile row4 col0 = id 32)
+//   2  = wall  (solid — drawn as filled rect)
+//   3  = door  (south wall centre — teal)
+//   4  = crate prop (drawn as coloured box placeholder)
+//   5  = weapon rack (drawn as coloured box placeholder)
+const ARMORY_MAP = [
+  [2,2,2,2,2,2,2,2,2],
+  [2,1,1,1,1,1,1,1,2],
+  [2,1,4,1,1,1,5,1,2],
+  [2,1,4,1,1,1,5,1,2],
+  [2,1,1,1,1,1,1,1,2],
+  [2,1,1,1,1,1,1,1,2],
+  [2,1,1,1,1,1,1,1,2],
+  [2,1,1,1,1,1,1,1,2],
+  [2,2,2,2,3,2,2,2,2],  // door at bottom centre (col 4)
+];
+const DOOR_ROW = 8, DOOR_COL = 4;  // exit door tile position
+
+
+function sendMove() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const now = performance.now();
+  if (now - _lastSend < 50) return;
+  _lastSend = now;
+  socket.send(JSON.stringify({
+    type: 'move', worldX: ship.worldX, worldY: ship.worldY,
+    vx: ship.vx, vy: ship.vy, dir: ship.dir,
+    laserWx: ship.laserWx||null, laserWy: ship.laserWy||null, laserTimer: ship.laserTimer||0,
+    speed: Math.hypot(ship.vx, ship.vy), animFrame: ship.animFrame,
+    hp: ship.hp, fuel: ship.fuel, ore: ship.ore, pvpIframes: ship.pvpIframes,
+    mineral: ship.mineral, armalcolite: ship.armalcolite,
+    thrusting: _thrusting, boosting: _boosting,
+  }));
+}
+
+function sendMine(aid, damage) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'mine', aid, damage }));
+}
+
+function sendCollectOre(oid) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'collect_ore', oid }));
+}
+
+function sendRefine() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'refine' }));
+}
+
+function drawRemotePlayers(cx, cy) {
+  if (!multiMode) return;
+  for (const p of Object.values(remotePlayers)) {
+    const sx = cx + (p.worldX - ship.worldX);
+    const sy = cy + (p.worldY - ship.worldY);
+    const margin = 120;
+    if (sx < -margin || sx > canvas.width + margin || sy < -margin || sy > canvas.height + margin) {
+      drawPlayerIndicator(p, cx, cy, sx, sy);
+      continue;
+    }
+    ctx.save();
+    ctx.translate(sx, sy);
+    const pDir = p.dir || 'south';
+    const pMoving = (p.thrusting || p.boosting);
+    const pFrame = (p.animFrame || 0) % FRAME_COUNT;
+    const pImg = pMoving
+      ? (animations[pDir] && animations[pDir][pFrame])
+      : rotations[pDir];
+    if (pImg) {
+      ctx.shadowColor = p.color; ctx.shadowBlur = 10;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(pImg, Math.round(-DISPLAY_SIZE/2), Math.round(-DISPLAY_SIZE/2), DISPLAY_SIZE, DISPLAY_SIZE);
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.shadowColor = p.color; ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.moveTo(0, -18); ctx.lineTo(11, 8); ctx.lineTo(0, 4); ctx.lineTo(-11, 8);
+      ctx.closePath();
+      ctx.fillStyle = p.color + 'cc'; ctx.fill();
+      ctx.strokeStyle = p.color; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+    const worldDist = Math.hypot(p.worldX-ship.worldX, p.worldY-ship.worldY);
+    const _hpPct = Math.max(0,(p.hp||100)/100);
+    const _hpCol = _hpPct>0.5?'#22c55e':_hpPct>0.25?'#f59e0b':'#ef4444';
+    ctx.save();
+    ctx.textAlign='center';
+    ctx.font='13px monospace'; ctx.fillStyle=p.color;
+    ctx.fillText(p.name, sx, sy-32);
+    if (worldDist < 600) {
+      const bW=80,bH=8,bx=sx-40,by=sy-26;
+      ctx.fillStyle='#000000cc'; ctx.fillRect(bx-2,by-2,bW+4,bH+4);
+      ctx.fillStyle='#0d1520';   ctx.fillRect(bx,by,bW,bH);
+      ctx.fillStyle=_hpCol;      ctx.fillRect(bx,by,bW*_hpPct,bH);
+      ctx.strokeStyle=_hpCol+'88'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bW,bH);
+      ctx.font='10px Courier New'; ctx.fillStyle=_hpCol;
+      ctx.fillText(Math.round(p.hp||100)+'/100', sx, by+bH+13);
+    } else {
+      const bW=36;
+      ctx.fillStyle='#0d1520';  ctx.fillRect(sx-bW/2-1,sy-22,bW+2,4);
+      ctx.fillStyle=_hpCol;     ctx.fillRect(sx-bW/2,sy-21,bW*_hpPct,2);
+    }
+    ctx.restore();
+
+    // Remote player mining beam
+    if (p.laserTimer > 0 && p.laserWx != null) {
+      const btx = cx+(p.laserWx-ship.worldX), bty = cy+(p.laserWy-ship.worldY);
+      const ba  = Math.min(1, p.laserTimer/10)*0.7;
+      ctx.save();
+      ctx.globalAlpha=ba; ctx.strokeStyle=p.color; ctx.lineWidth=1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(btx,bty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowColor=p.color; ctx.shadowBlur=12;
+      ctx.beginPath(); ctx.arc(btx,bty,5,0,Math.PI*2);
+      ctx.fillStyle=p.color; ctx.fill();
+      ctx.shadowBlur=0; ctx.restore();
+    }
+  }
+}
+
+function drawPlayerIndicator(p, cx, cy, sx, sy) {
+  const angle = Math.atan2(sy - cy, sx - cx);
+  const r     = Math.min(canvas.width, canvas.height) / 2 - 40;
+  const edgeX = cx + Math.cos(angle) * r;
+  const edgeY = cy + Math.sin(angle) * r;
+  const dist  = Math.round(Math.hypot(sx - cx, sy - cy) / 10) / 10;
+  ctx.save();
+  ctx.translate(edgeX, edgeY); ctx.rotate(angle + Math.PI / 2);
+  ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(6,4); ctx.lineTo(-6,4); ctx.closePath();
+  ctx.fillStyle = p.color + 'cc'; ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.font = '9px monospace'; ctx.fillStyle = p.color + 'aa'; ctx.textAlign = 'center';
+  ctx.fillText(p.name + ' ' + dist + 'km', edgeX, edgeY + 20);
+  ctx.restore();
+}
+
+
+
+// ===================== merged tail inline script (was 2nd <script> block) =====================
+
+// Pre-fill lobby IP with current hostname so it's always correct
+document.addEventListener('DOMContentLoaded', () => {
+  // Autofill saved username
+  const savedName = localStorage.getItem('driftbound_username');
+  if (savedName) {
+    const nameField = document.getElementById('lobby-name');
+    if (nameField) nameField.value = savedName;
+  }
+
+  const field = document.getElementById('lobby-ip');
+  if (field && !field.value) {
+    field.value = window.location.hostname;
+    field.placeholder = window.location.hostname;
+  }
+});
+
+canvas.addEventListener('mousedown', function(e) {
+  if (interiorMode && weapon && weapon.ammo > 0 && shootCooldown === 0) {
+    const rect2  = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / rect2.width;
+    const scaleY = canvas.height / rect2.height;
+    const offX2  = (canvas.width  - ARMORY_MAP[0].length * TILE) / 2;
+    const offY2  = (canvas.height - ARMORY_MAP.length    * TILE) / 2;
+    const mx2 = ((e.clientX - rect2.left) * scaleX - offX2) / TILE;
+    const my2 = ((e.clientY - rect2.top)  * scaleY - offY2) / TILE;
+    const dx2 = mx2 - iPlayerX, dy2 = my2 - iPlayerY;
+    const dist2 = Math.hypot(dx2, dy2);
+    if (dist2 > 0.01) {
+      projectiles.push({ x: iPlayerX, y: iPlayerY,
+        vx: (dx2/dist2)*PROJ_SPEED, vy: (dy2/dist2)*PROJ_SPEED,
+        owner: 'player', life: PROJ_LIFE });
+      weapon.ammo--;
+      shootCooldown = SHOOT_CD;
+    }
+  }
+});
+
+
+
+// ===== window bindings for inline HTML on*= handlers (lobby buttons/inputs) =====
+if (typeof lobbyConnect === 'function') window.lobbyConnect = lobbyConnect;
+window.showToast = showToast;
+
+// ===== dev/test bridge: live read/write handle for regression tests under module scope =====
+// (module scope hides top-level vars from page.evaluate; expose the ones tests need)
+window.__DB = {
+  get ship(){ return ship; },
+  get keys(){ return keys; },
+  get interiorMode(){ return interiorMode; },
+  set interiorMode(v){ interiorMode = v; },
+  get worldPods(){ return worldPods; },
+  get attachedPods(){ return attachedPods; },
+  get podRotations(){ return podRotations; },
+  get eEdge(){ return eEdge; },
+  get toastMsg(){ return toastMsg; },
+  get DevLog(){ return DevLog; },
+};

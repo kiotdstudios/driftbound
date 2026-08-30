@@ -1,0 +1,180 @@
+﻿<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>DRIFTBOUND — alpha_v0.2</title>
+
+<style>
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+
+  canvas { display: block; image-rendering: pixelated; }
+
+
+
+  #loading {
+
+    position: fixed; inset: 0; background: #070b12;
+
+    display: flex; flex-direction: column;
+
+    align-items: center; justify-content: center;
+
+    z-index: 100; color: #4FC3C3;
+
+  }
+
+  #loading h1 {
+
+    font-size: 36px; letter-spacing: 10px;
+
+    color: #fff; text-shadow: 0 0 30px #4FC3C3; margin-bottom: 8px;
+
+  }
+
+  #loading .sub {
+
+    font-size: 11px; letter-spacing: 4px; color: #4FC3C3;
+
+    margin-bottom: 32px; opacity: 0.7;
+
+  }
+
+  #loadbar-wrap { width: 280px; height: 3px; background: #1a2035; border: 1px solid #4FC3C3; }
+
+  #loadbar { height: 100%; background: #4FC3C3; width: 0%; transition: width 0.05s; }
+
+  #loadtext { margin-top: 10px; font-size: 10px; color: #4a5a6a; letter-spacing: 2px; }
+
+  #controls {
+
+    position: fixed; top: 24px; right: 24px;
+
+    color: #4FC3C3cc; font-size: 10px;
+
+    text-align: right; letter-spacing: 1px;
+
+    pointer-events: none; line-height: 1.8;
+
+    background: #000000bb;
+
+    padding: 8px 12px;
+
+    border: 1px solid #4FC3C333;
+
+    font-family: 'Courier New', monospace;
+
+  }
+
+  #title-badge {
+
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+
+    font-size: 13px; letter-spacing: 6px; color: #ffffff18; pointer-events: none;
+
+  }
+
+</style>
+
+</head>
+
+<body>
+
+
+
+<div id="loading">
+
+  <h1>DRIFTBOUND</h1>
+
+  <div class="sub">ALPHA v0.2</div>
+
+  <div id="loadbar-wrap"><div id="loadbar"></div></div>
+
+  <div id="loadtext">INITIALIZING...</div>
+
+</div>
+
+
+
+<canvas id="game"></canvas>
+
+
+
+
+
+<div id="controls">
+
+  WASD / ARROWS &mdash; DRIFT<br>
+
+  SHIFT &mdash; BOOST (burns fuel)<br>
+
+  SPACE &mdash; BRAKE<br>
+
+  M &mdash; MAP<br>
+
+  E &mdash; MINE ASTEROID<br>
+
+  C &mdash; REFINE ORE &rarr; FUEL
+
+</div>
+
+
+
+<div id="title-badge">DRIFTBOUND</div>
+
+
+
+<script type="module" src="src/main.js"></script>
+
+
+<!-- ─── MULTIPLAYER LOBBY ──────────────────────────────────────────────── -->
+<div id="lobby" style="
+  position:fixed; inset:0; background:#020810ee;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  z-index:999; font-family:monospace; color:#e2e8f0;
+">
+  <div style="font-size:11px;letter-spacing:4px;color:#64748b;margin-bottom:8px;">DRIFTBOUND</div>
+  <div style="font-size:28px;font-weight:bold;letter-spacing:2px;color:#7c3aed;margin-bottom:4px;">MULTIPLAYER</div>
+  <div style="font-size:11px;letter-spacing:3px;color:#475569;margin-bottom:40px;">ALPHA</div>
+
+  <div style="width:320px;">
+    <div style="font-size:10px;letter-spacing:2px;color:#64748b;margin-bottom:8px;">PILOT NAME</div>
+    <input id="lobby-name" maxlength="16" placeholder="Enter your name..."
+      style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;
+             color:#e2e8f0;padding:12px 16px;font-size:14px;font-family:monospace;
+             outline:none;letter-spacing:1px;margin-bottom:16px;"
+      onkeydown="if(event.key==='Enter')lobbyConnect()"
+    />
+    <div style="font-size:10px;letter-spacing:2px;color:#64748b;margin-bottom:8px;">SERVER IP</div>
+    <input id="lobby-ip" placeholder="localhost  (or friend's IP)"
+      style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;
+             color:#e2e8f0;padding:12px 16px;font-size:14px;font-family:monospace;
+             outline:none;letter-spacing:1px;margin-bottom:24px;"
+      onkeydown="if(event.key==='Enter')lobbyConnect()"
+    />
+    <button onclick="lobbyConnect()"
+      style="width:100%;padding:14px;background:#7c3aed;border:none;color:#fff;
+             font-size:13px;font-family:monospace;letter-spacing:3px;cursor:pointer;">
+      LAUNCH ▶
+    </button>
+    <button onclick="(function(){document.getElementById('lobby').style.display='none';if(typeof showToast==='function')showToast('Solo mode — no server', '#64748b');})()"
+      style="margin-top:8px;width:100%;padding:10px;background:transparent;border:1px solid #334155;color:#94a3b8;font-family:monospace;font-size:13px;border-radius:6px;cursor:pointer;letter-spacing:1px;"
+      onmouseover="this.style.borderColor='#64748b';this.style.color='#cbd5e1'"
+      onmouseout="this.style.borderColor='#334155';this.style.color='#94a3b8'"
+    >PLAY SOLO (OFFLINE)</button>
+    <div id="lobby-status" style="margin-top:16px;font-size:11px;color:#64748b;text-align:center;min-height:20px;"></div>
+  </div>
+</div>
+
+
+
+</body>
+
+</html>
+
