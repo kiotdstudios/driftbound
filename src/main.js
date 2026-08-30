@@ -1,3 +1,4 @@
+import { createEnvironment, ENV_CONFIG } from './render/background.js?v=20260830-5';
 
 
 
@@ -11,6 +12,9 @@ const canvas = document.getElementById('game');
 const ctx    = canvas.getContext('2d');
 
 ctx.imageSmoothingEnabled = false;
+
+// Deep-space environment (parallax nebula + procedural stars/particles).
+const env = createEnvironment(ctx, canvas);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEV MONITOR — persistent dev log. Never blocks the game.
@@ -424,17 +428,9 @@ function makeModuleNode(instId, typeId, parentMod, parentConn) {
 const podRotations  = {};
 const podAnimations = {};
 
-const BG_BASE  = 'vapor_bg/';
 
 
 
-// All 20 available backgrounds — cycle with [ / ]
-
-const BG_SETS = [
-  'vapor_02',
-];
-
-let currentBgIdx = 0;
 
 
 
@@ -448,9 +444,7 @@ const rotations  = {};
 
 const animations = {};
 
-let   bgLayers   = [];
 
-let   bgLoading  = false;
 
 
 
@@ -486,79 +480,10 @@ function refreshBar() {
 
 
 
-// Load one named background set (flat + 3 layers)
-
-function loadBgSet(name) {
-
-  bgLoading = true;
-
-  const defs = [
-
-    { file: `${name}_FLAT.png`,     speed: 0.05 },
-
-    { file: `${name}_L1_far.png`, speed: 0.20 },
-
-    { file: `${name}_L2_mid.png`, speed: 0.50 },
-
-    { file: `${name}_L3_near.png`,speed: 1.00 },
-
-
-    { file: `${name}_L4_atmo.png`,  speed: 1.60 },
-
-    { file: `${name}_L5_vapor.png`, speed: 2.40 },
-  ];
-
-  const jobs = defs.map(d =>
-
-    new Promise(resolve => {
-
-      const img = new Image();
-
-      img.onload  = () => resolve({ img, speed: d.speed });
-
-      img.onerror = () => resolve({ img: null, speed: d.speed });
-
-      img.src = `${BG_BASE}${d.file}`;
-
-    })
-
-  );
-
-  Promise.all(jobs).then(layers => {
-    // Keep bgLayers populated for legacy compatibility
-    bgLayers  = layers.sort((a, b) => a.speed - b.speed);
-    bgLoading = false;
-    bgFlash   = { name, timer: 120 };
-
-    // Also write _bgImgs[] so drawBG (which uses _bgImgs) shows the new set.
-    // defs order: [0]=FLAT, [1]=L1_far, [2]=L2_mid, [3]=L3_near — same as _bgImgs indices.
-    layers.forEach((layer, i) => {
-      // layers were sorted by speed; re-map by speed order back to index
-      // speeds: 0.05→0, 0.20→1, 0.50→2, 1.00→3
-      const idx = [0.05, 0.20, 0.50, 1.00, 1.60, 2.40].indexOf(layer.speed);
-      if (idx >= 0) _bgImgs[idx] = layer.img;
-    });
-    DevLog.info('Assets', 'Background set loaded: ' + name,
-      { loaded: layers.filter(l=>l.img).length, failed: layers.filter(l=>!l.img).length });
-  });
-
-}
 
 
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PARALLAX BACKGROUND — vapor_bg image layers
-// ═══════════════════════════════════════════════════════════════════════════
-// _bgImgs[0]=base,[1]=L1_far,[2]=L2_mid,[3]=L3_near,[4]=L4_atmo,[5]=L5_vapor
-const _bgImgs = [null, null, null, null, null, null];
-// Per-layer alpha. MUST stay index-aligned with _bgImgs and NEB_LAYERS
-// (a length/index mismatch is what historically fed drawBG an undefined layer).
-const _BG_ALP = [1.0, 0.55, 0.65, 0.75, 0.80, 0.70];
-
-function _initBG() {
-  // No-op — bg images loaded in loadAll, drawn with parallax in drawBG
-}
 
 
 async function loadAll() {
@@ -589,12 +514,21 @@ async function loadAll() {
     }
   }
 
-  // Vapor background layers
-  // Driftbound_Blue_Parallax_6Pack
-  const _bgFiles = ["01_far_nebula","02_mid_nebula","03_near_nebula","04_deep_space_base","05_atmosphere_detail","06_foreground_vapor"];
-  _bgFiles.forEach((name, i) => {
-    bgLoad(`Driftbound_Blue_Parallax_6Pack/${name}.png`, img => { _bgImgs[i] = img; });
+  // 7-layer deep-space environment pack -> named roles (order != render depth).
+  const _envImgs = {};
+  const _ENV_FILES = {
+    base:  '04_deep_space_base',    // opaque void foundation (deepest)
+    far:   '01_far_nebula',         // distant diffuse gas
+    mid:   '02_mid_nebula',         // mid gas
+    near:  '03_near_nebula',        // near gas
+    atmo:  '05_atmosphere_detail',  // bright atmosphere bands
+    vapor: '06_foreground_vapor',   // foreground wisps
+    dust:  '07_particles_dust_detail', // baked speckle texture (additive)
+  };
+  Object.entries(_ENV_FILES).forEach(([key, name]) => {
+    bgLoad(`Driftbound_Blue_Parallax_6Pack/${name}.png`, img => { _envImgs[key] = img; });
   });
+  env.setLayers(_envImgs);
 
   // Asteroid sprites — background load
   for (const t of ASTEROID_TYPES) {
@@ -650,7 +584,6 @@ const particles = [];
 
 const keys      = {};
 
-let   bgFlash   = null;   // { name, timer } — show map name briefly after switch
 let   mapMode   = false;  // true while regional map overlay is open (M key)
 
 
@@ -764,7 +697,6 @@ const INPUT_LOG_MAX = 30;       // keep last 30 input events
 
 const inputLog   = [];          // [{t, type, code}]
 
-let   nebTime  = 0;         // autonomous nebula animation clock
 
 // ─── CAMERA STATE ────────────────────────────────────────────────────────────
 // camLead: smooth lead offset toward velocity — gives a "looking ahead" feel
@@ -850,32 +782,6 @@ function drawDebris(cx, cy) {
 
 
 
-// Per-layer drift + opacity pulse params.
-
-// Each layer drifts independently — different speeds and directions = depth.
-
-// Flat base stays stable; L1/L2/L3 breathe and drift at different rates.
-
-// vx/vy: px per frame autonomous drift
-
-// wave: vertical sine amplitude (px) — makes gas undulate as it travels
-
-// pulseAmp: how much opacity swings (0 = none, 0.3 = swings from 0.7 to 1.0)
-
-// pulseSpd: radians per frame for opacity sine (~0.01 = ~10s cycle at 60fps)
-
-// phase: offset so layers don't all pulse in sync
-
-// Nebula drift — values are px/SECOND for each layer.
-// These are intentionally tiny so the gas feels enormous and distant.
-const NEB_LAYERS = [
-  { vx:  0.0, vy:  0.0  }, // [0] FLAT base -- completely static (no drift); aligns to _bgImgs[0]
-  { vx:  0.7, vy:  0.22 }, // [1] L1 far -- slow rightward drift
-  { vx: -0.4, vy:  0.55 }, // [2] L2 mid -- opposing drift, depth
-  { vx:  1.2, vy: -0.18 }, // [3] L3 near -- faster, diff angle
-  { vx: -0.9, vy:  0.35 }, // [4] L4 atmo -- slow counter-drift
-  { vx:  1.6, vy:  0.12 }, // [5] L5 vapor -- closest, fastest
-];
 
 
 
@@ -935,23 +841,6 @@ window.addEventListener('keydown', e => {
     }
   }
 
-  // Background cycling (dev/debug — [ and ] keys)
-
-  if (e.code === 'BracketLeft') {
-
-    currentBgIdx = (currentBgIdx - 1 + BG_SETS.length) % BG_SETS.length;
-
-    loadBgSet(BG_SETS[currentBgIdx]);
-
-  }
-
-  if (e.code === 'BracketRight') {
-
-    currentBgIdx = (currentBgIdx + 1) % BG_SETS.length;
-
-    loadBgSet(BG_SETS[currentBgIdx]);
-
-  }
 
 });
 
@@ -1956,163 +1845,8 @@ function drawToast() {
 
 
 
-// ─── BACKGROUND ───────────────────────────────────────────────────────────────
-
-function drawBG(camX, camY) {
-  const W = canvas.width, H = canvas.height;
-
-  // Deep void base
-  ctx.fillStyle = '#0a0010';
-  ctx.fillRect(0, 0, W, H);
-
-  // Nebula drift time — seconds from page load.
-  // Using Date.now() / 1000 so drift is frame-rate-independent and seamless.
-  const driftT = Date.now() / 1000;
-
-  function _drawNebulaLayer(img, layerIdx, alpha) {
-    if (!img || !img.naturalWidth) return;
-    const lyr   = NEB_LAYERS[layerIdx];
-    const iw    = img.naturalWidth;
-    const ih    = img.naturalHeight;
-    const scale = Math.max(W / iw, H / ih) * 1.04;
-    const sw    = Math.ceil(iw * scale);
-    const sh    = Math.ceil(ih * scale);
-
-    // Autonomous time-based drift only — no player-position parallax.
-    // Gas is so distant that player movement has zero visible effect on it.
-    const offX = ((driftT * lyr.vx % sw) + sw) % sw;
-    const offY = ((driftT * lyr.vy % sh) + sh) % sh;
-
-    ctx.globalAlpha = alpha;
-    for (let x = offX - sw; x < W + sw; x += sw) {
-      for (let y = offY - sh; y < H + sh; y += sh) {
-        ctx.drawImage(img, x, y, sw, sh);
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  // FLAT base — completely static (no drift)
-  // Bound the loop by the SMALLEST of the three index-aligned arrays so
-  // _drawNebulaLayer can never receive an index without a matching NEB_LAYERS
-  // descriptor or alpha (root fix for 'lyr is undefined'; not optional chaining).
-  const _nLayers = Math.min(_bgImgs.length, NEB_LAYERS.length, _BG_ALP.length);
-  for (let i = 0; i < _nLayers; i++) {
-    _drawNebulaLayer(_bgImgs[i], i, _BG_ALP[i]);
-  }
-
-  // Vignette
-  const vg = ctx.createRadialGradient(W/2, H/2, H*0.12, W/2, H/2, H*0.82);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,6,0.58)');
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, W, H);
-}
 
 
-// ─── STAR FIELD ───────────────────────────────────────────────────────────────
-// Three parallax layers: far, mid, near.
-// par values are tiny — distant stars barely shift with camera movement.
-// Stars provide the depth cue that the nebula (no parallax) does not.
-const _STAR_LAYERS = [
-  { count: 200, par: 0.0025, rMin: 0.4, rMax: 1.1, baseAlpha: 0.50, twAmp: 0.22, twFreq: 0.35 },
-  { count:  90, par: 0.0080, rMin: 0.7, rMax: 1.7, baseAlpha: 0.65, twAmp: 0.28, twFreq: 0.55 },
-  { count:  35, par: 0.0180, rMin: 1.1, rMax: 2.4, baseAlpha: 0.78, twAmp: 0.18, twFreq: 0.80 },
-];
-
-// Sparse foreground dust — barely visible smudges
-const _DUST = [];
-const _DUST_COUNT = 28;
-
-const _stars = [];
-const _STAR_PALETTE = ['#ffffff','#d8eeff','#ffe8d8','#e0d8ff','#c8e8ff','#fff8d0'];
-
-function _initStars() {
-  _stars.length = 0;
-  // Use a large spread so stars don't noticeably tile within game world bounds
-  const SPREAD = 8000;
-  _STAR_LAYERS.forEach((layer, li) => {
-    for (let i = 0; i < layer.count; i++) {
-      _stars.push({
-        wx:    (Math.random() - 0.5) * SPREAD,
-        wy:    (Math.random() - 0.5) * SPREAD,
-        r:     layer.rMin + Math.random() * (layer.rMax - layer.rMin),
-        li:    li,
-        phase: Math.random() * Math.PI * 2,
-        col:   _STAR_PALETTE[Math.floor(Math.random() * _STAR_PALETTE.length)],
-      });
-    }
-  });
-  // Dust — fixed screen-relative positions, extremely subtle
-  _DUST.length = 0;
-  for (let i = 0; i < _DUST_COUNT; i++) {
-    _DUST.push({
-      wx: (Math.random() - 0.5) * 6000,
-      wy: (Math.random() - 0.5) * 6000,
-      r:  0.3 + Math.random() * 0.5,
-      a:  0.04 + Math.random() * 0.07,
-    });
-  }
-}
-
-function drawStars(camX, camY) {
-  const W = canvas.width, H = canvas.height;
-  const t = Date.now() * 0.001;
-
-  // The star "tile" wraps within this size.
-  // Large enough so the seam is never in view during normal play.
-  const SS = 8000;
-
-  for (const star of _stars) {
-    const layer = _STAR_LAYERS[star.li];
-
-    // Screen position with tiny parallax wrap
-    const rawX = star.wx - camX * layer.par;
-    const rawY = star.wy - camY * layer.par;
-    const sx = ((rawX % SS) + SS) % SS - SS / 2 + W / 2;
-    const sy = ((rawY % SS) + SS) % SS - SS / 2 + H / 2;
-
-    if (sx < -4 || sx > W + 4 || sy < -4 || sy > H + 4) continue;
-
-    // Twinkling
-    const tw    = layer.twAmp * Math.sin(t * layer.twFreq * Math.PI * 2 + star.phase);
-    const alpha = Math.max(0.08, layer.baseAlpha + tw);
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    if (star.r > 1.4) {
-      // Larger stars get a tiny soft glow
-      const grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, star.r * 2.5);
-      grd.addColorStop(0, star.col);
-      grd.addColorStop(0.5, star.col + '88');
-      grd.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grd;
-      ctx.beginPath();
-      ctx.arc(sx, sy, star.r * 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      // Tiny stars — single pixel rect (crisp, no gradient overhead)
-      ctx.fillStyle = star.col;
-      const pr = Math.max(0.5, star.r);
-      ctx.fillRect(Math.round(sx) - pr * 0.5, Math.round(sy) - pr * 0.5, pr, pr);
-    }
-    ctx.restore();
-  }
-
-  // Dust pass — separate loop, very low alpha, no twinkling
-  for (const d of _DUST) {
-    const rawX = d.wx - camX * 0.012;
-    const rawY = d.wy - camY * 0.012;
-    const sx = ((rawX % SS) + SS) % SS - SS / 2 + W / 2;
-    const sy = ((rawY % SS) + SS) % SS - SS / 2 + H / 2;
-    if (sx < -2 || sx > W + 2 || sy < -2 || sy > H + 2) continue;
-    ctx.save();
-    ctx.globalAlpha = d.a;
-    ctx.fillStyle = '#a0b8d0';
-    ctx.fillRect(Math.round(sx), Math.round(sy), d.r, d.r);
-    ctx.restore();
-  }
-}
 
 
 
@@ -3023,17 +2757,6 @@ function drawHUD(speed) {
   y += R_H;
   hbox(_yF);
 
-  // ─ Map name flash ─
-  if (bgFlash && bgFlash.timer > 0) {
-    const fa = Math.min(1, bgFlash.timer / 30);
-    ctx.save(); ctx.globalAlpha = fa;
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 14px "Courier New",monospace';
-    ctx.fillStyle = TEAL; ctx.shadowColor = TEAL; ctx.shadowBlur = 12;
-    ctx.fillText('MAP: ' + bgFlash.name.replace('_', ' ').toUpperCase(), W / 2, H - 30);
-    ctx.restore();
-    bgFlash.timer--;
-  }
 }
 
 // Helper: rounded rect path
@@ -3669,15 +3392,17 @@ function drawDebug(speed) {
 
 
 
-  divider('BACKGROUND');
+  divider('ENVIRONMENT');
 
-  row('MAP IDX',     currentBgIdx + ' / ' + (BG_SETS.length - 1));
+  const _es = env.stats();
 
-  row('MAP NAME',    BG_SETS[currentBgIdx]);
+  row('BG LAYERS',   _es.layers + ' / 7');
 
-  row('LAYERS',      bgLayers.length + ' loaded');
+  row('STAR COUNT',  _es.stars);
 
-  row('NEB TIME',    nebTime);
+  row('PARTICLE CT', _es.particles);
+
+  row('CAMERA VEL',  _es.camVel.toFixed(3));
 
 
 
@@ -4033,8 +3758,8 @@ function loop(now) {
 
 
 
-  drawBG(ship.worldX, ship.worldY);
-  drawStars(ship.worldX, ship.worldY);
+  env.render({ x: ship.worldX, y: ship.worldY, vx: ship.vx, vy: ship.vy,
+               boosting: (ship.boostRamp > 0.15), now });
 
   // ── WORLD ZOOM TRANSFORM (world only; scales around screen center) ──
   ctx.save();
@@ -4276,11 +4001,6 @@ function runHealthCheck() {
   if (!POD_TYPES || Object.keys(POD_TYPES).length === 0)
     issues.push({ level:'ERROR', msg:'POD_TYPES empty or missing' });
 
-  // Parallax layer arrays MUST be index-aligned; a mismatch would hand drawBG
-  // an undefined layer object (the 'lyr is undefined' runtime crash).
-  if (NEB_LAYERS.length !== _bgImgs.length || _BG_ALP.length !== _bgImgs.length)
-    issues.push({ level:'CRITICAL', msg:'Parallax layer arrays misaligned',
-      ctx:{ neb: NEB_LAYERS.length, img: _bgImgs.length, alp: _BG_ALP.length } });
 
   // World asteroids
   try {
@@ -4314,10 +4034,12 @@ function runHealthCheck() {
     issues.push({ level:'ERROR', msg:'localStorage unavailable — saves will fail', ctx: e?.message });
   }
 
-  // Background images (warn if none loaded; normal to be null on first frame)
-  const bgReady = _bgImgs.filter(x => x !== null).length;
+  // Environment layers (warn if none loaded; normal to be 0 on first frame)
+  const bgReady = env.stats().layers;
   if (bgReady === 0)
-    DevLog.info('HealthCheck', 'BG images not yet loaded (normal — async load in progress)');
+    DevLog.info('HealthCheck', 'Env layers not yet loaded (normal — async load in progress)');
+  else if (bgReady < 7)
+    DevLog.info('HealthCheck', 'Env layers loading', { loaded: bgReady, of: 7 });
 
   // Report
   const errorCount = issues.filter(i=>i.level==='ERROR'||i.level==='CRITICAL').length;
@@ -4357,9 +4079,8 @@ async function boot() {
 
   if (debugMode) drawDebug(speed);
 
-  _initStars();
+  env.initField();
   initDebris();
-  _initBG();
   runHealthCheck();
 
   // Catch uncaught JS exceptions during the game loop and surface them to DevLog
@@ -4837,6 +4558,8 @@ window.__DB = {
   get DevLog(){ return DevLog; },
   get devControls(){ return devControls; },
   get asteroids(){ return getAsteroids(); },
+  envStats(){ return env.stats(); },
+  get envConfig(){ return ENV_CONFIG; },
   get shipAssembly(){ return shipAssembly; },
   get totalMass(){ return computeTotalMass(); },
   get accelMult(){ return massAccelMult(); },
