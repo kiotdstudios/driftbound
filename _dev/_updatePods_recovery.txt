@@ -1,0 +1,47 @@
+function updatePods() {
+  if (!keys['KeyF']) return;
+  for (let i = worldPods.length - 1; i >= 0; i--) {
+    const pod  = worldPods[i];
+    const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
+    if (dist < POD_ATTACH_RANGE) {
+
+      if (pod.type === '_wreck') {
+        // ── Recover wreck cargo ──
+        const c = pod.cargo || {};
+        ship.ore          += (c.ore          || 0);
+        ship.mineral      += (c.mineral      || 0);
+        ship.armalcolite  += (c.armalcolite  || 0);
+        worldPods.splice(i, 1);
+        const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
+        showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
+        saveGame();
+        // Burst particles (orange)
+        for (let p = 0; p < 25; p++) {
+          const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+          particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+            life:40+Math.random()*30,maxLife:70,color:'#f97316',size:2+Math.random()*2});
+        }
+
+      } else {
+        // ── Attach module pod ──
+        if (ship.ore >= POD_ATTACH_COST) {
+          ship.ore -= POD_ATTACH_COST;
+          const podType = POD_TYPES[pod.type];
+          attachedPods.push({ ...podType, pid: pod.pid });
+          worldPods.splice(i, 1);
+          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
+          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+          saveGame();
+          for (let p = 0; p < 30; p++) {
+            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
+          }
+        } else {
+          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        }
+      }
+      return; // one pod per keypress
+    }
+  }
+}

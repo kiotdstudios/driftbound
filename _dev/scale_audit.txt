@@ -1,0 +1,82 @@
+
+═══════════════════════════════════════════════════════════
+PRIORITY 4 — OBJECT SCALE / VISUAL CONSISTENCY AUDIT
+═══════════════════════════════════════════════════════════
+
+SOURCE DATA (from constants in driftbound_flight_test.html)
+───────────────────────────────────────────────────────────
+Ship sprite:     SPRITE_SIZE=68px × DISPLAY_SCALE=2 = 136×136px on screen
+                 The actual ship is a ~68px sprite stretched to 136px.
+
+Asteroid sprites (drawn at AST_SCALE=2):
+  sm_brown:   source 38×32px → rendered 76×64px
+  lg_brown:   source 40×39px → rendered 80×78px
+  lg_planet:  source 42×39px → rendered 84×78px  ← intended as planet-like body
+
+Pod (world):    vector-drawn at ~R=18px core + 28px solar panels ≈ 84px total width
+
+SCALE COMPARISON
+───────────────────────────────────────────────────────────
+Object          Rendered size   vs. Ship (136px)
+─────────────────────────────────────────────────
+Ship            136×136px       — (reference)
+lg_planet       84×78px         ≈ 62% of ship height  ⚠ INCONSISTENT
+lg_brown        80×78px         ≈ 57% of ship height  ⚠ INCONSISTENT  
+sm_brown        76×64px         ≈ 47% of ship height  ⚠ INCONSISTENT
+World pod       ~84px wide      ≈ 62% of ship width   acceptable (small module)
+
+INCONSISTENCIES IDENTIFIED
+───────────────────────────────────────────────────────────
+
+1. SHIP LARGER THAN A "PLANET" — CRITICAL
+   lg_planet is supposed to be a planet-like celestial body but renders at 84×78px,
+   which is smaller than the player ship at 136px. The player appears to be flying
+   a craft bigger than a planet. This destroys spatial immersion.
+   Recommendation: increase lg_planet display size by 3-4× (e.g., AST_SCALE=6 for
+   this type, or define per-type scale overrides).
+
+2. ALL ASTEROIDS TOO SMALL RELATIVE TO SHIP — MODERATE
+   Even lg_brown at 80px is noticeably smaller than the 136px ship. Real mining
+   asteroids should feel dangerous and imposing, not like pebbles. A minimum of
+   1.5× ship size for "large" asteroids would feel right. Small asteroids at ~60%
+   is acceptable as debris.
+   Recommendation: increase AST_SCALE from 2 to 3 for lg types, keep 2 for sm.
+
+3. PIXEL DENSITY MISMATCH — MODERATE
+   The ship is a high-detail pixel art sprite (SPRITE_SIZE=68 scaled 2×).
+   The asteroid sprites are smaller source images (38-42px) also scaled 2×.
+   At the same render scale both should have similar pixel density — this is OK.
+   However, the ship sprites use imageSmoothingEnabled=false, and asteroids also
+   use imageSmoothingEnabled=false — art style is consistent (pixel-exact).
+
+4. LIGHTING DIRECTION — CANNOT DETERMINE WITHOUT VIEWING ASSETS
+   The source sprites are in pod_sprites/ and Demo_assets/asteroids/.
+   Without viewing the actual image files, lighting consistency cannot be confirmed.
+   Once assets are visible in-browser, check that ship light source ≈ asteroid
+   light source direction.
+
+5. ART STYLE COHESION — PARTIAL MISMATCH
+   Ship: detailed military pixel art sprite (modular spacecraft)
+   Asteroids: appear to be photo-realistic mineral rock sprites based on file names
+              (sm_brown, lg_brown = brown rocky textures; lg_planet = planetary body)
+   These may come from different asset packs with different style conventions.
+   The "lg_planet" ID combined with a round asteroid sprite suggests it was
+   intended as a distant moon/planet object, not a minable rock — but it drops
+   ore on mining, blurring this distinction.
+
+RECOMMENDED FIXES (in priority order, NOT changing assets yet):
+───────────────────────────────────────────────────────────
+1. Add per-type scale override to ASTEROID_TYPES:
+   { id: 'lg_planet', ..., scale: 4 }  — renders at 42*4=168px, bigger than ship ✓
+   { id: 'lg_brown',  ..., scale: 3 }  — renders at 40*3=120px, close to ship  ✓
+   { id: 'sm_brown',  ..., scale: 2 }  — keeps current 76px, "debris" scale    ✓
+
+2. Review lg_planet: consider renaming to "debris_cluster" or making it visually
+   distinct (blue outline?) if it is indeed a mining rock and not a planet.
+
+3. After scale fix, audit draw distance — larger planet sprite needs larger
+   frustum cull margin (currently -sw-20, which would become -168-20 = -188).
+
+═══════════════════════════════════════════════════════════
+END AUDIT — no assets modified
+═══════════════════════════════════════════════════════════
