@@ -453,7 +453,7 @@ function loadImg(src) {
 
     img.onload  = () => { loadedAssets++; refreshBar(); resolve(img); };
 
-    img.onerror = () => { loadedAssets++; refreshBar(); resolve(null); };
+    img.onerror = () => { loadedAssets++; refreshBar(); DevLog.warn('Assets', 'ASSET LOAD FAILED: ' + src); resolve(null); };
 
     img.src = src;
 
@@ -510,13 +510,21 @@ function loadBgSet(name) {
   );
 
   Promise.all(jobs).then(layers => {
-
+    // Keep bgLayers populated for legacy compatibility
     bgLayers  = layers.sort((a, b) => a.speed - b.speed);
-
     bgLoading = false;
+    bgFlash   = { name, timer: 120 };
 
-    bgFlash   = { name, timer: 120 };   // show map name for 120 frames
-
+    // Also write _bgImgs[] so drawBG (which uses _bgImgs) shows the new set.
+    // defs order: [0]=FLAT, [1]=L1_far, [2]=L2_mid, [3]=L3_near — same as _bgImgs indices.
+    layers.forEach((layer, i) => {
+      // layers were sorted by speed; re-map by speed order back to index
+      // speeds: 0.05→0, 0.20→1, 0.50→2, 1.00→3
+      const idx = [0.05, 0.20, 0.50, 1.00].indexOf(layer.speed);
+      if (idx >= 0) _bgImgs[idx] = layer.img;
+    });
+    DevLog.info('Assets', 'Background set loaded: ' + name,
+      { loaded: layers.filter(l=>l.img).length, failed: layers.filter(l=>!l.img).length });
   });
 
 }
@@ -626,6 +634,7 @@ const particles = [];
 const keys      = {};
 
 let   bgFlash   = null;   // { name, timer } — show map name briefly after switch
+let   mapMode   = false;  // true while regional map overlay is open (M key)
 
 
 
@@ -729,7 +738,18 @@ window.addEventListener('keydown', e => {
 
 
 
-  // Background cycling
+  // Regional map toggle — M key
+  if (e.code === 'KeyM') {
+    // Don't open map while in interior or during a fade
+    if (!interiorMode && interiorFadeDir === 0) {
+      mapMode = !mapMode;
+      DevLog.info('MapSystem', mapMode ? 'Regional map opened' : 'Regional map closed');
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // Background cycling (dev/debug — [ and ] keys)
 
   if (e.code === 'BracketLeft') {
 
@@ -2132,7 +2152,15 @@ function drawHUD(speed) {
   const cFull     = cUsed >= cMax;
   const resLines  = (ship.ore>0?1:0) + (ship.mineral>0?1:0) + (ship.armalcolite>0?1:0);
   const podLines  = attachedPods.length;
-  const PH        = 192 + resLines*20 + (podLines?(podLines*18+10):0);
+  const fuelLow   = ship.fuel <= 0 || fuelPct < 0.2;    // stable bool — no blinking resize
+  const emptyHold = resLines === 0;                      // "empty hold" line shown when no cargo
+  // 192 covers: name+5, 3 bars×18, separator10, cargo-label18, cargo-bar12, sep16, actions36, pos18
+  // +emptyHold*20 — "empty hold" text
+  // +fuelLow*18   — fuel warning row
+  // +podLines*18  — one row per attached pod
+  // +8            — bottom padding so text never touches border
+  const PH = 192 + resLines*20 + (emptyHold?20:0) + (fuelLow?18:0)
+           + (podLines?(podLines*18+10):0) + 8;
 
   // Background panel
   ctx.save();
@@ -2252,8 +2280,10 @@ function drawHUD(speed) {
   if (ship.fuel <= 0) {
     ctx.font=SML; ctx.fillStyle='#ff4444';
     ctx.fillText('✕  FUEL EMPTY — ADRIFT', L, y); y+=18;
-  } else if (fuelPct < 0.2 && Math.floor(t/500)%2===0) {
-    ctx.font=SML; ctx.fillStyle=ORANGE;
+  } else if (fuelPct < 0.2) {
+    // always render (stable height); blink the colour for visual urgency
+    const _wBlink = Math.floor(t/500)%2===0;
+    ctx.font=SML; ctx.fillStyle = _wBlink ? '#ffaa00' : ORANGE;
     ctx.fillText('⚠  LOW FUEL', L, y); y+=18;
   }
 
@@ -2470,6 +2500,213 @@ function drawMinimap() {
   ctx.fillStyle = '#38bdf888'; ctx.fillText('POD', lx+10, ly+13);
   ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.arc(lx+4, ly+20, 2.5, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = '#22c55e88'; ctx.fillText('ORE', lx+10, ly+23);
+  ctx.restore();
+}
+
+
+// ─── REGIONAL MAP OVERLAY ─────────────────────────────────────────────────────
+// Press M to open/close. Shows local sector: player, pods, asteroids, ore, signals.
+// Suspends movement while open. MVP — no fog of war, full range shown.
+function drawRegionalMap() {
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+
+  // ── Full-screen dim ──
+  ctx.fillStyle = 'rgba(0,4,12,0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Map panel ──
+  const MPW = Math.min(900, W - 80);   // map panel width
+  const MPH = Math.min(680, H - 80);   // map panel height
+  const MPX = (W - MPW) / 2;
+  const MPY = (H - MPH) / 2;
+
+  // Panel background + border
+  ctx.fillStyle = 'rgba(2,8,18,0.96)';
+  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#4FC3C3';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 10;
+  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Title
+  ctx.save();
+  ctx.font = 'bold 14px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C3';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 8;
+  ctx.fillText('◈  SECTOR MAP', W/2, MPY + 24);
+  ctx.shadowBlur = 0;
+
+  // Ship name + coords subtitle
+  ctx.font = '11px "Courier New", monospace';
+  ctx.fillStyle = '#3a5060';
+  ctx.fillText(
+    (ship.shipType ? ship.shipType.name : 'SHIP') +
+    '  ·  ' + Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY),
+    W/2, MPY + 42
+  );
+  ctx.restore();
+
+  // ── Map drawing area (inside panel, with margin) ──
+  const MX = MPX + 40,  MY = MPY + 60;   // draw area origin
+  const MW = MPW - 80,  MH = MPH - 100;  // draw area size
+  const MCX = MX + MW/2, MCY = MY + MH/2; // center of map
+
+  // Draw area clip + background
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(MX, MY, MW, MH);
+  ctx.clip();
+
+  ctx.fillStyle = 'rgba(0,4,14,0.98)';
+  ctx.fillRect(MX, MY, MW, MH);
+
+  // Grid lines
+  const RANGE = 3500;   // world units visible from center to edge
+  const SCALE = Math.min(MW, MH) / 2 / RANGE;
+
+  const gridStep = 500;   // world units per grid line
+  ctx.strokeStyle = '#4FC3C310'; ctx.lineWidth = 0.5;
+  for (let wx = -RANGE; wx <= RANGE; wx += gridStep) {
+    const sx = MCX + wx * SCALE;
+    ctx.beginPath(); ctx.moveTo(sx, MY); ctx.lineTo(sx, MY+MH); ctx.stroke();
+  }
+  for (let wy = -RANGE; wy <= RANGE; wy += gridStep) {
+    const sy = MCY + wy * SCALE;
+    ctx.beginPath(); ctx.moveTo(MX, sy); ctx.lineTo(MX+MW, sy); ctx.stroke();
+  }
+
+  // Cross-hairs at player center
+  ctx.strokeStyle = '#4FC3C322'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(MCX, MY); ctx.lineTo(MCX, MY+MH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(MX, MCY); ctx.lineTo(MX+MW, MCY); ctx.stroke();
+
+  // ── Asteroids — orange dots ──
+  for (const ast of getAsteroids()) {
+    const dx = (ast.worldX - ship.worldX) * SCALE;
+    const dy = (ast.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
+    const r = Math.max(2, (ast.type ? ast.type.w / 14 : 3));
+    ctx.fillStyle = '#f97316';
+    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, r, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Type label on hover is MVP-deferred; show size hint with opacity
+  }
+
+  // ── Ore pickups — green blips ──
+  for (const o of (typeof orePickups !== 'undefined' ? orePickups : [])) {
+    const dx = (o.worldX - ship.worldX) * SCALE;
+    const dy = (o.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 4 || Math.abs(dy) > MH/2 + 4) continue;
+    ctx.fillStyle = '#22c55e';
+    ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 5;
+    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, 3, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // ── World pods — cyan diamonds ──
+  const podBlink = 0.6 + 0.4 * Math.sin(t * 0.003);
+  for (const pod of worldPods) {
+    const dx = (pod.worldX - ship.worldX) * SCALE;
+    const dy = (pod.worldY - ship.worldY) * SCALE;
+    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
+    const pCol = (POD_TYPES[pod.type]||{}).color || '#38bdf8';
+    const px = MCX+dx, py = MCY+dy;
+    ctx.save();
+    ctx.globalAlpha = podBlink;
+    ctx.translate(px, py); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = pCol;
+    ctx.shadowColor = pCol; ctx.shadowBlur = 8;
+    ctx.fillRect(-5, -5, 10, 10);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    // Label
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = pCol + 'cc';
+    ctx.textAlign = 'center';
+    ctx.fillText((POD_TYPES[pod.type]||{label:'POD'}).label, MCX+dx, MCY+dy - 11);
+  }
+
+  // ── Home marker (first worldPod or origin) ──
+  const homeX = worldPods.length > 0 ? worldPods[0].worldX : 0;
+  const homeY = worldPods.length > 0 ? worldPods[0].worldY : 0;
+  const hdx = (homeX - ship.worldX) * SCALE;
+  const hdy = (homeY - ship.worldY) * SCALE;
+  if (Math.abs(hdx) <= MW/2 && Math.abs(hdy) <= MH/2) {
+    ctx.fillStyle = '#FFD700';
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12;
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⌂', MCX+hdx, MCY+hdy + 5);
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Player dot (center) ──
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(MCX, MCY, 5, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Direction arrow from player
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2;
+    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.moveTo(MCX + Math.cos(da)*7, MCY + Math.sin(da)*7);
+    ctx.lineTo(MCX + Math.cos(da)*18, MCY + Math.sin(da)*18);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();  // end clip
+
+  // ── Map border ──
+  ctx.strokeStyle = '#4FC3C330'; ctx.lineWidth = 1;
+  ctx.strokeRect(MX, MY, MW, MH);
+
+  // ── Scale bar ──
+  const scalePx = 500 * SCALE;  // 500 world units
+  const sbX = MPX + MPW - 120, sbY = MPY + MPH - 24;
+  ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(sbX, sbY); ctx.lineTo(sbX + scalePx, sbY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sbX, sbY-4); ctx.lineTo(sbX, sbY+4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sbX+scalePx, sbY-4); ctx.lineTo(sbX+scalePx, sbY+4); ctx.stroke();
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C3';
+  ctx.textAlign = 'center';
+  ctx.fillText('500u', sbX + scalePx/2, sbY + 12);
+
+  // ── Legend ──
+  const lx = MPX + 16, ly = MPY + MPH - 72;
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  const legend = [
+    { col:'#ffffff', label:'YOU'      },
+    { col:'#f97316', label:'ASTEROID' },
+    { col:'#38bdf8', label:'POD'      },
+    { col:'#22c55e', label:'ORE'      },
+    { col:'#FFD700', label:'HOME'     },
+  ];
+  legend.forEach((item, i) => {
+    ctx.fillStyle = item.col;
+    ctx.beginPath(); ctx.arc(lx+6, ly + i*16 + 4, 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = item.col + 'aa';
+    ctx.fillText(item.label, lx+16, ly + i*16 + 8);
+  });
+
+  // ── Close hint ──
+  ctx.save();
+  ctx.font = '11px "Courier New", monospace';
+  ctx.fillStyle = '#2a4050';
+  ctx.textAlign = 'center';
+  ctx.fillText('[M]  CLOSE MAP', W/2, MPY + MPH - 10);
   ctx.restore();
 }
 
@@ -2709,7 +2946,12 @@ function update() {
   // Smooth boost ramp: 0=cruise, 1=full boost
 
   if (interiorMode) { requestAnimationFrame(loop); return; }
-  const shiftHeld = (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
+  // Map open: freeze ship movement but keep render loop alive for map draw
+  if (mapMode) {
+    ship.vx *= 0.88;  // gentle bleed-off so ship doesn't fly forever when map closes
+    ship.vy *= 0.88;
+  }
+  const shiftHeld = !mapMode && (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
 
   if (shiftHeld) {
 
@@ -2739,7 +2981,7 @@ function update() {
 
     if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
 
-    if (keys['KeyA'] || keys['ArrowLeft'])  ax -= t;
+    if (!mapMode && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
 
     if (keys['KeyD'] || keys['ArrowRight']) ax += t;
 
@@ -2996,6 +3238,9 @@ function loop(now) {
   }
 
   drawToast();
+
+  // Regional map overlay — rendered last so it covers everything
+  if (mapMode) drawRegionalMap();
 
 
 
