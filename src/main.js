@@ -4592,4 +4592,5 @@ window.__DB = {
   get toastMsg(){ return toastMsg; },
   get DevLog(){ return DevLog; },
   get devControls(){ return devControls; },
+  get asteroids(){ return getAsteroids(); },
 };
