@@ -296,10 +296,10 @@ const ORE_COLLECT_R  = 50;     // auto-collect radius
 
 
 const ASTEROID_TYPES = [
-  // id          hp  oreMin  oreMax  size        type          loot chance
-  { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02 },
-  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02 },
-  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35 },
+  // id           hp  oreMin  oreMax  sprite-px       loot              scale  → rendered px
+  { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02, scale: 2 }, // 76×64   — smaller than ship
+  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02, scale: 4 }, // 160×156 — materially larger than ship (136px)
+  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35, scale: 4 }, // 168×156 — approx 168px per spec
 ];
 
 // Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
@@ -677,6 +677,66 @@ function showToast(msg) { toastMsg = msg; toastTimer = 150; }
 let debugMode    = false;       // F1 toggles debug overlay
 let diagMode     = false;       // F2 toggles dev diagnostics overlay
 
+// DEV_MODE — enables in-flight cheat shortcuts for rapid testing.
+// Set to false before any public build.
+const DEV_MODE = true;
+
+// ─── DEV COMMANDS ─────────────────────────────────────────────────────────────
+// All developer shortcuts live here — one definition per command.
+// Execution function fires only when DEV_MODE is true and no text input has focus.
+// Keys: Slash=FullFuel, KeyH=FullHull, KeyO=FullOxygen(stub),
+//       KeyR=TestResources, KeyP=SpawnTestPod
+const DEV_COMMANDS = {
+  Slash: {
+    key: 'Slash', label: '/ — Full Fuel',
+    exec() {
+      ship.fuel = FUEL_CAPACITY;
+      showToast('DEV: FUEL RESTORED', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Fuel restored to maximum');
+    },
+  },
+  KeyH: {
+    key: 'KeyH', label: 'H — Full Hull',
+    exec() {
+      ship.hp = SHIP_MAX_HP;
+      showToast('DEV: HULL RESTORED', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Hull restored to maximum');
+    },
+  },
+  KeyO: {
+    key: 'KeyO', label: 'O — Full Oxygen (stub)',
+    exec() {
+      // Oxygen system not yet implemented — placeholder so the key is reserved
+      showToast('DEV: OXYGEN — system not yet implemented', '#ffaa00');
+      DevLog.info('DevCheat', 'DEV CHEAT: Oxygen stub triggered (no-op)');
+    },
+  },
+  KeyR: {
+    key: 'KeyR', label: 'R — Give Test Resources',
+    exec() {
+      ship.ore          += 25;
+      ship.mineral      += 10;
+      ship.armalcolite  += 5;
+      showToast('DEV: +25 Nebulite  +10 Mineral  +5 Armalcolite', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Test resources granted');
+    },
+  },
+  KeyP: {
+    key: 'KeyP', label: 'P — Spawn Test Pod',
+    exec() {
+      const pid = 'dev_pod_' + Date.now();
+      worldPods.push({
+        worldX: ship.worldX + 220,
+        worldY: ship.worldY +  80,
+        type:   'modular_space_pod',
+        pid,
+      });
+      showToast('DEV: Test pod spawned (220px ahead-right)', '#00ff88');
+      DevLog.info('DevCheat', 'DEV CHEAT: Test pod spawned', { pid });
+    },
+  },
+};
+
 let frameCount   = 0;
 
 let fpsCounter   = 0;
@@ -759,6 +819,16 @@ window.addEventListener('keydown', e => {
     }
     e.preventDefault();
     return;
+  }
+
+  // Dev cheat commands — only fires when DEV_MODE is true and no text input is focused
+  if (DEV_MODE && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+    const _devCmd = DEV_COMMANDS[e.code];
+    if (_devCmd) {
+      e.preventDefault();
+      _devCmd.exec();
+      return;
+    }
   }
 
   // Background cycling (dev/debug — [ and ] keys)
@@ -1341,9 +1411,11 @@ function drawAsteroids(cx, cy) {
 
   for (const ast of getAsteroids()) {
 
-    const sw  = ast.type.w * AST_SCALE;
+    // Per-type scale override — falls back to global AST_SCALE if not defined
+    const _sc = ast.type.scale || AST_SCALE;
+    const sw  = ast.type.w * _sc;
 
-    const sh  = ast.type.h * AST_SCALE;
+    const sh  = ast.type.h * _sc;
 
     const sx  = Math.round(cx + (ast.worldX - camX));
 
@@ -3078,6 +3150,38 @@ function drawDiagnostics() {
     ctx.textAlign = 'left';
     y += LH;
   });
+
+  // DEV COMMANDS section (only when DEV_MODE is active)
+  if (typeof DEV_MODE !== 'undefined' && DEV_MODE) {
+    // Extra height is now drawn below the main panel — shift y past the panel
+    const devY0 = py + PH + 6;
+    const devLH = 14;
+    const devCmds = typeof DEV_COMMANDS !== 'undefined' ? Object.values(DEV_COMMANDS) : [];
+    const devPH = devCmds.length * devLH + PAD * 2 + 14;
+
+    ctx.fillStyle = 'rgba(0,8,4,0.90)';
+    roundRect(ctx, px, devY0, PW, devPH, 4); ctx.fill();
+    ctx.strokeStyle = '#ffaa0044'; ctx.lineWidth = 1;
+    roundRect(ctx, px, devY0, PW, devPH, 4); ctx.stroke();
+    ctx.fillStyle = '#ffaa00'; ctx.fillRect(px, devY0, 2, devPH);
+
+    let dy = devY0 + PAD + devLH - 3;
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = '#ffaa00';
+    ctx.shadowColor = '#ffaa00'; ctx.shadowBlur = 4;
+    ctx.fillText('DEV COMMANDS (DEV_MODE ON)', px + PAD + 4, dy);
+    ctx.shadowBlur = 0;
+    dy += devLH + 1;
+    ctx.strokeStyle = '#ffaa0030'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(px+4, dy-6); ctx.lineTo(px+PW-4, dy-6); ctx.stroke();
+
+    devCmds.forEach(cmd => {
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = '#c8a820';
+      ctx.fillText(cmd.label, px + PAD + 4, dy);
+      dy += devLH;
+    });
+  }
 
   // Bottom hint
   ctx.fillStyle = DIM;
