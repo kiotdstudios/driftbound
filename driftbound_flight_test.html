@@ -1,3 +1,4 @@
+        addCamShake(10);
 <!DOCTYPE html>
 
 <html lang="en">
@@ -759,6 +760,71 @@ const inputLog   = [];          // [{t, type, code}]
 
 let   nebTime  = 0;         // autonomous nebula animation clock
 
+// ─── CAMERA STATE ────────────────────────────────────────────────────────────
+// camLead: smooth lead offset toward velocity — gives a "looking ahead" feel
+// camShake: impulse decay from impacts/boost — settles quickly
+let camLeadX = 0, camLeadY = 0;
+let camShakeX = 0, camShakeY = 0;
+let _prevBoosting = false;  // edge-detect for boost-start flare
+
+function addCamShake(amt) {
+  camShakeX += (Math.random() - 0.5) * amt * 2;
+  camShakeY += (Math.random() - 0.5) * amt * 2;
+}
+
+// ─── AMBIENT DEBRIS ───────────────────────────────────────────────────────────
+// Small tumbling rock fragments drifting across the sector — no collision.
+// Reinforce the sense of a lived-in, broken-down region of space.
+const _debris = [];
+const DEBRIS_COUNT = 22;
+
+function initDebris() {
+  _debris.length = 0;
+  for (let i = 0; i < DEBRIS_COUNT; i++) {
+    _debris.push({
+      wx:    (Math.random() - 0.5) * 3600,
+      wy:    (Math.random() - 0.5) * 3600,
+      vx:    (Math.random() - 0.5) * 0.14,
+      vy:    (Math.random() - 0.5) * 0.14,
+      angle: Math.random() * Math.PI * 2,
+      rotSpd:(Math.random() - 0.5) * 0.009,
+      size:  2 + Math.random() * 5,
+      alpha: 0.12 + Math.random() * 0.22,
+    });
+  }
+}
+
+function tickDebris() {
+  for (const d of _debris) {
+    d.wx += d.vx; d.wy += d.vy; d.angle += d.rotSpd;
+    if (d.wx >  1800) d.wx -= 3600;
+    if (d.wx < -1800) d.wx += 3600;
+    if (d.wy >  1800) d.wy -= 3600;
+    if (d.wy < -1800) d.wy += 3600;
+  }
+}
+
+function drawDebris(cx, cy) {
+  const camX = ship.worldX, camY = ship.worldY;
+  for (const d of _debris) {
+    const sx = cx + (d.wx - camX);
+    const sy = cy + (d.wy - camY);
+    if (sx < -20 || sx > canvas.width+20 || sy < -20 || sy > canvas.height+20) continue;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(d.angle);
+    ctx.globalAlpha = d.alpha;
+    ctx.fillStyle = '#5a6a7a';
+    const s = d.size;
+    ctx.beginPath();
+    ctx.moveTo(-s, -s*0.4); ctx.lineTo(-s*0.3, -s); ctx.lineTo(s*0.5, -s*0.6);
+    ctx.lineTo(s, 0); ctx.lineTo(s*0.6, s); ctx.lineTo(-s*0.4, s*0.7);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
 
 
 // Per-layer drift + opacity pulse params.
@@ -1501,12 +1567,52 @@ function drawAsteroids(cx, cy) {
 
     }
 
+
+    // Damage stage overlays — crack lines + sparks as hull degrades
+    if (ast.hp < ast.maxHp) {
+      const _pct = ast.hp / ast.maxHp;
+      if (_pct < 0.75) {
+        ctx.save();
+        ctx.translate(sx + jx, sy + jy);
+        ctx.rotate(ast.angle || 0);
+        ctx.globalAlpha = (1 - _pct) * 0.55;
+        ctx.strokeStyle = '#1a0800';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-sw*0.18, -sh*0.28); ctx.lineTo(sw*0.08, sh*0.12);
+        ctx.moveTo(sw*0.12, -sh*0.22); ctx.lineTo(-sw*0.06, sh*0.25);
+        if (_pct < 0.45) { ctx.moveTo(-sw*0.05, sh*0.1); ctx.lineTo(sw*0.22, -sh*0.05); }
+        ctx.stroke();
+        ctx.restore();
+        // Sparks at critical damage
+        if (_pct < 0.4 && Math.random() < 0.025) {
+          for (let _si = 0; _si < 2; _si++) {
+            particles.push({ x: sx+jx+(Math.random()-0.5)*sw*0.5,
+              y: sy+jy+(Math.random()-0.5)*sh*0.5,
+              vx:(Math.random()-0.5)*2.2, vy:-0.8-Math.random()*2.4,
+              life:1.0, decay:0.1+Math.random()*0.08,
+              size:1+Math.random()*1.2, color:'#ffaa22' });
+          }
+        }
+      }
+    }
+
+    // Context hint — "[E] MINE" floats below target asteroid
+    if (mineTarget === ast) {
+      ctx.save();
+      ctx.font = '10px "Courier New",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#4FC3C3bb';
+      ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 3;
+      ctx.fillText('[E] MINE', sx + jx, sy + jy + sh*0.5 + 16);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
+
   }
 
 }
-
-
-
 // ─── DRAW ORE PICKUPS ────────────────────────────────────────────────────────
 
 // ─── DRAW WORLD PODS ─────────────────────────────────────────────────────────
@@ -2018,6 +2124,10 @@ function drawShip(cx, cy, now, speed) {
 
   const moving = speed > SPEED_THRESH;
 
+  // Idle bob — gentle oscillation when drifting; disappears once thrusting
+  const _bobT = Date.now();
+  const _idleBob = moving ? 0 : Math.sin(_bobT * 0.0012) * 1.8 + Math.cos(_bobT * 0.0007) * 0.8;
+
   if (moving && now - ship.animTimer > ANIM_INTERVAL) {
 
     ship.animFrame = (ship.animFrame + 1) % FRAME_COUNT;
@@ -2040,13 +2150,31 @@ function drawShip(cx, cy, now, speed) {
 
     ctx.imageSmoothingEnabled = false;
 
+    // Thruster glow — radial gradient behind ship, scales with speed and boost
+    if (_thrusting || _boosting) {
+      const _glBackIdx = (DIRS.indexOf(ship.dir) + 4) % 8;
+      const _glBackRad = DIR_ANGLES_DEG[_glBackIdx] * Math.PI / 180;
+      const _gx = cx + Math.cos(_glBackRad) * DISPLAY_SIZE * 0.36;
+      const _gy = cy + _idleBob + Math.sin(_glBackRad) * DISPLAY_SIZE * 0.36;
+      const _glowR = _boosting ? (22 + speed * 4) : (12 + speed * 2);
+      const _grad = ctx.createRadialGradient(_gx, _gy, 0, _gx, _gy, _glowR);
+      _grad.addColorStop(0, _boosting ? 'rgba(255,120,20,0.95)' : 'rgba(60,220,200,0.85)');
+      _grad.addColorStop(0.5, _boosting ? 'rgba(255,60,0,0.4)' : 'rgba(40,160,160,0.3)');
+      _grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = _grad;
+      ctx.beginPath(); ctx.arc(_gx, _gy, _glowR, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
     ctx.drawImage(
 
       frame,
 
       Math.round(cx - DISPLAY_SIZE / 2),
 
-      Math.round(cy - DISPLAY_SIZE / 2),
+      Math.round(cy + _idleBob - DISPLAY_SIZE / 2),
 
       DISPLAY_SIZE, DISPLAY_SIZE
 
@@ -2381,346 +2509,106 @@ function drawHUD(speed) {
   const W = canvas.width, H = canvas.height;
   const t = Date.now();
 
-  // ── Palette ──
   const TEAL   = '#4FC3C3';
   const ORANGE = '#e07b30';
-  const WHT    = '#d0e4f0';
-  const DIM    = '#3a5060';
-  const ACC    = '#38bdf8';
+  const DIM    = '#2a3c4c';
   const ERR    = '#ef4444';
 
-  // ── Layout constants — all drawing uses these, nothing else ──
-  const PAD_X  = 10;   // left/right interior padding
-  const PAD_Y  = 10;   // top/bottom interior padding
-  const PW     = 240;  // panel width
-  const PX     = 14;   // panel left edge from screen
-  const PY_TOP = 14;   // panel top edge from screen
-  const R_H    = 18;   // standard row height
-  const B_H    =  4;   // bar fill height
-  const B_OFF  =  4;   // bar top from row top (so bar is vertically centered)
-  const TXT    = 13;   // text baseline offset from row top (consistent across all rows)
-  const DIV_A  =  4;   // space above divider line
-  const DIV_B  =  6;   // space below divider line  (total divider block = DIV_A + 1 + DIV_B = 11)
-  const SEC_B  =  4;   // space below section label
+  const fuelPct  = ship.fuel / FUEL_CAPACITY;
+  const hpPct    = ship.hp / SHIP_MAX_HP;
+  const cUsed    = cargoUsed();
+  const cMax     = (ship.shipType ? ship.shipType.cargoLimit : 50) +
+                   attachedPods.reduce((s, p) => s + (p.cargoBonus || 0), 0);
+  const cFull    = cUsed >= cMax;
+  const boostOn  = _boosting && ship.fuel > 0;
+  const fuelLow  = fuelPct < 0.2;
+  const fuelEmpty= ship.fuel <= 0;
 
-  // ── Derived values ──
-  const fuelPct    = ship.fuel / FUEL_CAPACITY;
-  const hpPct      = ship.hp / SHIP_MAX_HP;
-  const cUsed      = cargoUsed();
-  const cMax       = (ship.shipType ? ship.shipType.cargoLimit : 50) +
-                     attachedPods.reduce((s, p) => s + (p.cargoBonus || 0), 0);
-  const cFull      = cUsed >= cMax;
-  const boostOn    = _boosting && ship.fuel > 0;
-  const fuelLow    = fuelPct < 0.2;
-  const fuelEmpty  = ship.fuel <= 0;
-  const resRows    = (ship.ore > 0 ? 1 : 0) + (ship.mineral > 0 ? 1 : 0) + (ship.armalcolite > 0 ? 1 : 0);
-  const emptyHold  = resRows === 0;
-
-  // ── Pre-calculate panel height ──
-  // Every block below adds the same amount it will draw.
-  // Formula is the single source of truth — drawing code MUST match it.
-  const DIV = DIV_A + 1 + DIV_B;   // 11px per divider
-  const SEC = R_H + SEC_B;         // 22px per section label row
-
-  let PH = PAD_Y;
-  // Header
-  PH += R_H + 4;                             // ship name (slightly taller)
-  // ─ NAVIGATION ─
-  PH += DIV;                                  // divider
-  PH += SEC;                                  // section label
-  PH += R_H;                                  // speed bar row
-  PH += R_H;                                  // direction row
-  PH += R_H;                                  // position row
-  // ─ SHIP ─
-  PH += DIV;
-  PH += SEC;
-  PH += R_H;                                  // hull bar
-  PH += R_H;                                  // fuel bar
-  if (fuelEmpty || fuelLow)  PH += R_H;       // optional fuel warning
-  // ─ CARGO ─
-  PH += DIV;
-  PH += SEC;
-  PH += R_H;                                  // hold label+count
-  PH += B_OFF + B_H + 5;                      // cargo bar  (B_OFF + bar + gap)
-  PH += (emptyHold ? 1 : resRows) * R_H;      // resource rows (or empty-hold text)
-  // ─ Pods (optional) ─
-  if (attachedPods.length > 0) {
-    PH += DIV;
-    PH += attachedPods.length * R_H;
-  }
-  // ─ CONTEXT ─
-  PH += DIV;
-  PH += SEC;
-  PH += R_H;  // [C]
-  PH += R_H;  // [E]
-  // Footer
-  PH += DIV_A + 1 + DIV_B;                   // thin divider above coords
-  PH += R_H;                                  // coordinate row
-  PH += PAD_Y;
-
-  // ── Panel background ──
   ctx.save();
-  ctx.fillStyle = 'rgba(2,6,14,0.86)';
-  roundRect(ctx, PX, PY_TOP, PW, PH, 4);
-  ctx.fill();
-  ctx.strokeStyle = TEAL + '28';
-  ctx.lineWidth = 1;
-  roundRect(ctx, PX, PY_TOP, PW, PH, 4);
-  ctx.stroke();
-  ctx.fillStyle = TEAL;
-  ctx.fillRect(PX, PY_TOP, 2, PH);            // left accent bar
-  ctx.restore();
 
-  // ── Content layout ──
-  const L  = PX + PAD_X;         // left text start x
-  const R  = PX + PW - PAD_X;    // right-aligned values end x
-  const LV = L + 48;             // label column right edge / bar left edge
-  const BW = R - LV;             // bar width
-
-  let y = PY_TOP + PAD_Y;
-
-  const F_SML = '11px "Courier New",monospace';
-  const F_MED = '12px "Courier New",monospace';
-  const F_HDR = 'bold 13px "Courier New",monospace';
-  const F_SEC = '10px "Courier New",monospace';
-  const F_XSM = '10px "Courier New",monospace';
-
-  // ── helper: bar row (label + fill bar + right-aligned value) ──
-  function barRow(label, pct, c0, c1, valStr, valCol) {
-    ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
-    ctx.fillText(label, L, y + TXT);
-    const bx = LV, by = y + B_OFF;
-    ctx.fillStyle = '#08111e';
-    ctx.fillRect(bx, by, BW, B_H);
-    const bg = ctx.createLinearGradient(bx, 0, bx + BW, 0);
-    bg.addColorStop(0, c0); bg.addColorStop(1, c1 || c0);
-    ctx.fillStyle = bg;
-    ctx.fillRect(bx, by, BW * Math.min(Math.max(pct, 0), 1), B_H);
-    ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
-    ctx.strokeRect(bx, by, BW, B_H);
-    if (valStr !== undefined) {
-      ctx.font = F_SML; ctx.fillStyle = valCol || WHT; ctx.textAlign = 'right';
-      ctx.fillText(valStr, R, y + TXT);
-      ctx.textAlign = 'left';
-    }
-    y += R_H;
-  }
-
-  // ── helper: plain text row (left label + optional right value) ──
-  function txtRow(label, val, lCol, vCol) {
-    ctx.font = F_SML; ctx.fillStyle = lCol || DIM; ctx.textAlign = 'left';
-    ctx.fillText(label, L, y + TXT);
-    if (val !== undefined) {
-      ctx.font = F_SML; ctx.fillStyle = vCol || WHT; ctx.textAlign = 'right';
-      ctx.fillText(val, R, y + TXT);
-      ctx.textAlign = 'left';
-    }
-    y += R_H;
-  }
-
-  // ── helper: section divider + label ──
-  function section(label) {
-    y += DIV_A;
-    ctx.strokeStyle = TEAL + '20'; ctx.lineWidth = 0.75;
-    ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
-    y += 1 + DIV_B;
-    ctx.font = F_SEC; ctx.fillStyle = TEAL + '99'; ctx.textAlign = 'left';
-    ctx.fillText(label, L, y + TXT - 1);
-    y += R_H + SEC_B;
-  }
-
-  // ════════════════════════════════════════════
-  // HEADER — ship name + inline compass
-  // ════════════════════════════════════════════
-  ctx.save();
-  ctx.font = F_HDR; ctx.fillStyle = TEAL;
-  ctx.shadowColor = TEAL; ctx.shadowBlur = 5; ctx.textAlign = 'left';
-  ctx.fillText('◈  ' + (ship.shipType ? ship.shipType.name.toUpperCase() : 'SHIP'), L, y + TXT + 1);
-  ctx.shadowBlur = 0;
-  // Compass
-  const cpX = PX + PW - PAD_X - 11, cpY = y + 9, cpR = 10;
-  ctx.strokeStyle = DIM; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cpX, cpY, cpR, 0, Math.PI * 2); ctx.stroke();
-  const dIdx = DIRS.indexOf(ship.dir);
-  if (dIdx >= 0) {
-    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
-    ctx.strokeStyle = TEAL; ctx.lineWidth = 1.8;
-    ctx.shadowColor = TEAL; ctx.shadowBlur = 4;
-    ctx.beginPath(); ctx.moveTo(cpX, cpY);
-    ctx.lineTo(cpX + Math.cos(da) * (cpR - 1), cpY + Math.sin(da) * (cpR - 1));
-    ctx.stroke(); ctx.shadowBlur = 0;
-  }
-  ctx.restore();
-  y += R_H + 4;
-
-  // ════════════════════════════════════════════
-  // NAVIGATION
-  // ════════════════════════════════════════════
-  section('NAVIGATION');
-
-  // Speed bar
-  barRow('SPD',
-    speed / BOOST_MAX,
-    '#1e5a7a', boostOn ? '#ff6b35' : TEAL,
-    speed.toFixed(2),
-    boostOn ? '#ff9055' : WHT);
-
-  // Direction
-  txtRow('DIR', ship.dir.toUpperCase().replace('-', '  '));
-
-  // Position
-  txtRow('POS', Math.floor(ship.worldX) + '  ·  ' + Math.floor(ship.worldY));
-
-  // ════════════════════════════════════════════
-  // SHIP
-  // ════════════════════════════════════════════
-  section('SHIP');
+  // Status strip: top-left, two thin bars only
+  const SX = 14, SY = 14;
+  const SW = 120;
+  const BH = 3, BG = 3;
 
   // Hull bar
-  barRow('HULL',
-    hpPct,
-    hpPct > 0.5 ? '#1d5e38' : hpPct > 0.25 ? '#7a5500' : '#6b1000',
-    hpPct > 0.5 ? '#36e878' : hpPct > 0.25 ? '#ffbb00' : '#ff3333',
-    ship.hp + ' / ' + SHIP_MAX_HP,
-    hpPct < 0.25 ? ERR : WHT);
-
-  // Fuel — segmented bar (custom renderer)
-  ctx.font = F_SML; ctx.textAlign = 'left';
-  if (boostOn) { ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 5; ctx.fillStyle = '#ffcc55'; }
-  else         { ctx.shadowBlur = 0; ctx.fillStyle = fuelLow ? ORANGE : DIM; }
-  ctx.fillText('FUEL', L, y + TXT);
+  const hullC = hpPct > 0.5 ? '#36e878' : hpPct > 0.25 ? '#ffbb00' : ERR;
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(SX - 1, SY - 1, SW + 2, BH + 2);
+  ctx.globalAlpha = 1;
+  if (hpPct < 0.25) { ctx.shadowColor = ERR; ctx.shadowBlur = 5; }
+  ctx.fillStyle = hullC;
+  ctx.fillRect(SX, SY, Math.max(1, Math.round(SW * hpPct)), BH);
   ctx.shadowBlur = 0;
 
-  const segN  = 10, segGap = 2;
-  const segBW = Math.floor((BW - segGap * (segN - 1)) / segN);
-  const fBy   = y + B_OFF;
+  // Fuel bar — 8 segments
+  const FY = SY + BH + BG;
+  const segN = 8, segGap = 1;
+  const segW = Math.floor((SW - segGap*(segN-1)) / segN);
   for (let i = 0; i < segN; i++) {
     const lit = i < Math.ceil(fuelPct * segN);
     let sc;
-    if (!lit) { sc = '#08111e'; }
+    if (!lit) sc = 'rgba(10,18,28,0.7)';
     else if (boostOn) {
       const flk = 0.55 + 0.45 * Math.sin(t * 0.018 + i * 0.9);
-      sc = `rgb(255,${Math.round(80 + 120 * flk)},${Math.round(10 + 30 * flk)})`;
+      sc = 'rgb(' + 255 + ',' + Math.round(80+120*flk) + ',' + Math.round(10+30*flk) + ')';
     } else {
-      sc = fuelPct > 0.5 ? '#2a9e5a' : fuelPct > 0.25 ? '#c8a020' : ORANGE;
+      sc = fuelPct > 0.5 ? '#1e7a42' : fuelPct > 0.25 ? '#b08010' : ORANGE;
     }
-    if (boostOn && lit) { ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 3 + 2 * Math.sin(t * 0.02 + i); }
+    if (boostOn && lit) { ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 3; }
     ctx.fillStyle = sc;
-    ctx.fillRect(LV + i * (segBW + segGap), fBy, segBW, B_H);
+    ctx.fillRect(SX + i*(segW+segGap), FY, segW, BH);
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = TEAL + '14'; ctx.lineWidth = 0.5;
-    ctx.strokeRect(LV + i * (segBW + segGap), fBy, segBW, B_H);
-  }
-  ctx.font = F_SML; ctx.fillStyle = fuelLow ? ORANGE : WHT; ctx.textAlign = 'right';
-  ctx.fillText(ship.fuel.toFixed(1) + ' gal', R, y + TXT);
-  ctx.textAlign = 'left';
-  y += R_H;
-
-  // Fuel warning (only when applicable — height already reserved in PH)
-  if (fuelEmpty) {
-    ctx.font = F_SML; ctx.fillStyle = ERR; ctx.textAlign = 'left';
-    ctx.fillText('✕  FUEL EMPTY — ADRIFT', L, y + TXT);
-    y += R_H;
-  } else if (fuelLow) {
-    const blink = Math.floor(t / 500) % 2 === 0;
-    ctx.font = F_SML; ctx.fillStyle = blink ? '#ffaa00' : ORANGE; ctx.textAlign = 'left';
-    ctx.fillText('⚠  LOW FUEL', L, y + TXT);
-    y += R_H;
   }
 
-  // ════════════════════════════════════════════
-  // CARGO
-  // ════════════════════════════════════════════
-  section('CARGO');
-
-  // Hold header row
-  ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : DIM; ctx.textAlign = 'left';
-  ctx.fillText('HOLD', L, y + TXT);
-  ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : WHT; ctx.textAlign = 'right';
-  ctx.fillText(cUsed + ' / ' + cMax + (cFull ? '  ●FULL' : ''), R, y + TXT);
-  ctx.textAlign = 'left';
-  y += R_H;
-
-  // Cargo fill bar (thin, full panel width)
-  const cbx = L, cby = y + B_OFF, cbw = PW - PAD_X * 2, cbh = B_H;
-  ctx.fillStyle = '#08111e'; ctx.fillRect(cbx, cby, cbw, cbh);
-  const cg = ctx.createLinearGradient(cbx, 0, cbx + cbw, 0);
-  cg.addColorStop(0, '#1e5a7a'); cg.addColorStop(1, cFull ? ERR : ACC);
-  ctx.fillStyle = cg;
-  ctx.fillRect(cbx, cby, cbw * (cUsed / Math.max(cMax, 1)), cbh);
-  ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
-  ctx.strokeRect(cbx, cby, cbw, cbh);
-  y += B_OFF + B_H + 5;
-
-  // Resource rows
-  if (emptyHold) {
-    ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
-    ctx.fillText('— empty hold —', L + 6, y + TXT);
-    y += R_H;
-  } else {
-    if (ship.ore > 0) {
-      ctx.font = F_MED; ctx.fillStyle = '#FFD700'; ctx.textAlign = 'left';
-      ctx.fillText('◆  ' + ship.ore + '  NEBULITE', L + 4, y + TXT);
-      y += R_H;
-    }
-    if (ship.mineral > 0) {
-      ctx.font = F_MED; ctx.fillStyle = '#c4b5fd'; ctx.textAlign = 'left';
-      ctx.fillText('♦  ' + ship.mineral + '  MINERAL', L + 4, y + TXT);
-      y += R_H;
-    }
-    if (ship.armalcolite > 0) {
-      ctx.font = F_MED; ctx.fillStyle = '#6ee7b7'; ctx.textAlign = 'left';
-      ctx.fillText('◈  ' + ship.armalcolite + '  ARMALCOLITE', L + 4, y + TXT);
-      y += R_H;
-    }
+  // Cargo line
+  if (cUsed > 0 || cFull) {
+    ctx.font = '9px "Courier New",monospace';
+    ctx.fillStyle = cFull ? ERR : DIM;
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 0.8;
+    ctx.fillText('HOLD  ' + cUsed + ' / ' + cMax + (cFull ? '  FULL' : ''), SX, FY + BH + 10);
+    ctx.globalAlpha = 1;
   }
 
-  // ─ Attached pods ─
+  // Pods indicator
   if (attachedPods.length > 0) {
-    y += DIV_A;
-    ctx.strokeStyle = ACC + '20'; ctx.lineWidth = 0.75;
-    ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
-    y += 1 + DIV_B;
-    attachedPods.forEach(p => {
-      ctx.font = F_MED; ctx.fillStyle = p.color || ACC; ctx.textAlign = 'left';
-      ctx.fillText('⦿  ' + p.label + (p.cargoBonus ? '  +' + p.cargoBonus + ' cargo' : ''), L + 4, y + TXT);
-      y += R_H;
-    });
+    ctx.font = '9px "Courier New",monospace';
+    ctx.fillStyle = '#38bdf877';
+    ctx.textAlign = 'left';
+    const podY = (cUsed > 0 || cFull) ? FY + BH + 20 : FY + BH + 10;
+    ctx.fillText('\u22c4 PODS  ' + attachedPods.length, SX, podY);
   }
 
-  // ════════════════════════════════════════════
-  // CONTEXT
-  // ════════════════════════════════════════════
-  section('CONTEXT');
+  // Critical alerts — bottom center
+  if (fuelEmpty) {
+    ctx.font = 'bold 11px "Courier New",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = ERR;
+    ctx.shadowColor = ERR; ctx.shadowBlur = 8;
+    ctx.fillText('ADRIFT  \u2014  NO FUEL', W/2, H - 26);
+    ctx.shadowBlur = 0;
+  } else if (fuelLow) {
+    if (Math.floor(t / 550) % 2 === 0) {
+      ctx.font = '10px "Courier New",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = ORANGE;
+      ctx.fillText('LOW FUEL', W/2, H - 26);
+    }
+  }
 
-  const canCraft = ship.armalcolite > 0;
-  ctx.textAlign = 'left';
+  // Refine hint
+  if (ship.armalcolite > 0) {
+    ctx.font = '10px "Courier New",monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6ee7b788';
+    ctx.shadowColor = '#6ee7b7'; ctx.shadowBlur = 2;
+    ctx.fillText('[C] REFINE  +' + FUEL_PER_CRAFT.toFixed(1) + ' fuel', W/2 + 78, H/2 + 64);
+    ctx.shadowBlur = 0;
+  }
 
-  // [C] Refine
-  ctx.font = F_SML; ctx.fillStyle = canCraft ? '#FFD700' : DIM;
-  ctx.fillText('[C]', L, y + TXT);
-  ctx.fillStyle = canCraft ? WHT : DIM;
-  ctx.fillText(' REFINE  →  +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', L + 22, y + TXT);
-  y += R_H;
-
-  // [E] Mine
-  ctx.font = F_SML; ctx.fillStyle = mineTarget ? TEAL : DIM;
-  ctx.fillText('[E]', L, y + TXT);
-  ctx.fillStyle = mineTarget ? WHT : DIM;
-  ctx.fillText(' MINE' + (mineTarget ? '  ' + Math.round(mineDist) + ' px' : ''), L + 22, y + TXT);
-  y += R_H;
-
-  // ════════════════════════════════════════════
-  // FOOTER — coordinates
-  // ════════════════════════════════════════════
-  y += DIV_A;
-  ctx.strokeStyle = TEAL + '14'; ctx.lineWidth = 0.5;
-  ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
-  y += 1 + DIV_B;
-  ctx.font = F_XSM; ctx.fillStyle = DIM + 'cc'; ctx.textAlign = 'left';
-  ctx.fillText(Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), L, y + TXT);
-
-  // ─ Map name flash ─
+  // Map name flash
   if (bgFlash && bgFlash.timer > 0) {
     const fa = Math.min(1, bgFlash.timer / 30);
     ctx.save(); ctx.globalAlpha = fa;
@@ -2731,6 +2619,8 @@ function drawHUD(speed) {
     ctx.restore();
     bgFlash.timer--;
   }
+
+  ctx.restore();
 }
 
 // Helper: rounded rect path
@@ -3517,7 +3407,7 @@ function update() {
 
       const dy   = ast.worldY - ship.worldY;
 
-      const astR = Math.max(ast.type.w, ast.type.h) * AST_SCALE * 0.38;
+      const astR = Math.max(ast.type.w, ast.type.h) * (ast.type.scale || AST_SCALE) * 0.38;
 
       const minD = COLLISION_RADIUS + astR;
 
@@ -3542,6 +3432,7 @@ function update() {
         ship.iframes = COLLISION_IFRAMES;
 
         ship.hitFlash = 18;
+        addCamShake(8);
 
         showToast('HULL DAMAGE  │  ' + ship.hp + ' / ' + SHIP_MAX_HP);
 
@@ -3573,6 +3464,7 @@ function update() {
         ship.hp         = Math.max(0, ship.hp - PVP_DAMAGE);
         ship.pvpIframes = PVP_IFRAMES;
         ship.hitFlash   = 22;
+        addCamShake(8);
         showToast('COLLISION — ' + rp.name + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
         // Tell server — so rp's client also takes damage
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -3632,9 +3524,36 @@ function loop(now) {
 
   updateMining();
 
-  const cx    = canvas.width  / 2;
+  // ── Camera: smooth lead + shake ──────────────────────────────────────────
+  // Lead eases toward velocity direction — makes space feel responsive.
+  // Shake decays quickly after impacts and boost-start.
+  const CAM_LEAD = 18, CAM_LAG = 0.09;
+  camLeadX += (ship.vx * CAM_LEAD - camLeadX) * CAM_LAG;
+  camLeadY += (ship.vy * CAM_LEAD - camLeadY) * CAM_LAG;
+  camShakeX *= 0.74; camShakeY *= 0.74;
 
-  const cy    = canvas.height / 2;
+  // Boost-start: camera jolt + orange flare particle burst
+  const _curBoosting = _boosting && ship.fuel > 0;
+  if (_curBoosting && !_prevBoosting) {
+    addCamShake(6);
+    const _fBackIdx = (DIRS.indexOf(ship.dir) + 4) % 8;
+    const _fBackRad = DIR_ANGLES_DEG[_fBackIdx] * Math.PI / 180;
+    const _fpx = canvas.width/2 + Math.cos(_fBackRad) * DISPLAY_SIZE * 0.38;
+    const _fpy = canvas.height/2 + Math.sin(_fBackRad) * DISPLAY_SIZE * 0.38;
+    for (let _bi = 0; _bi < 10; _bi++) {
+      const _ang = _fBackRad + (Math.random()-0.5) * 1.4;
+      const _spd = 2 + Math.random() * 3.5;
+      particles.push({ x:_fpx, y:_fpy,
+        vx:Math.cos(_ang)*_spd, vy:Math.sin(_ang)*_spd,
+        life:1.0, decay:0.07+Math.random()*0.06, size:2+Math.random()*2.5,
+        color: Math.random() < 0.6 ? '#ff8820' : '#ffdd44' });
+    }
+  }
+  _prevBoosting = _curBoosting;
+
+  const cx = Math.round(canvas.width  / 2 - camLeadX + camShakeX);
+
+  const cy = Math.round(canvas.height / 2 - camLeadY + camShakeY);
 
 
 
@@ -3662,6 +3581,9 @@ function loop(now) {
 
   drawBG(ship.worldX, ship.worldY);
   drawStars(ship.worldX, ship.worldY);
+  tickDebris();
+  drawDebris(cx, cy);
+
 
   drawAsteroids(cx, cy);
 
@@ -3922,6 +3844,7 @@ async function boot() {
   if (debugMode) drawDebug(speed);
 
   _initStars();
+  initDebris();
   _initBG();
   runHealthCheck();
 
@@ -4124,6 +4047,7 @@ function handleServerMsg(msg) {
         ship.hp         = Math.max(0, ship.hp - (msg.damage || PVP_DAMAGE));
         ship.pvpIframes = PVP_IFRAMES;
         ship.hitFlash   = 22;
+        addCamShake(8);
         const attacker  = remotePlayers[msg.by];
         const aName     = attacker ? attacker.name : 'enemy';
         showToast('HIT BY ' + aName + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
