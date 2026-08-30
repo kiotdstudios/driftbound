@@ -244,7 +244,7 @@ const BOOST_RAMP_UP   = 0.011; // ramp to full boost: ~90 frames (~1.5s) — gen
 
 const BOOST_RAMP_DOWN = 0.006; // ramp back to cruise: ~167 frames — long inertia coast
 
-const THRUST       = 0.126; // -30% accel
+const THRUST       = 0.030; // gentle accel: ~0.45s to reach cruise cap (was 0.126 / ~0.1s — too snappy vs coast-down)
 
 const FRICTION     = 0.984;
 
@@ -502,6 +502,10 @@ function loadBgSet(name) {
 
     { file: `${name}_L3_near.png`,speed: 1.00 },
 
+
+    { file: `${name}_L4_atmo.png`,  speed: 1.60 },
+
+    { file: `${name}_L5_vapor.png`, speed: 2.40 },
   ];
 
   const jobs = defs.map(d =>
@@ -531,7 +535,7 @@ function loadBgSet(name) {
     layers.forEach((layer, i) => {
       // layers were sorted by speed; re-map by speed order back to index
       // speeds: 0.05→0, 0.20→1, 0.50→2, 1.00→3
-      const idx = [0.05, 0.20, 0.50, 1.00].indexOf(layer.speed);
+      const idx = [0.05, 0.20, 0.50, 1.00, 1.60, 2.40].indexOf(layer.speed);
       if (idx >= 0) _bgImgs[idx] = layer.img;
     });
     DevLog.info('Assets', 'Background set loaded: ' + name,
@@ -546,10 +550,10 @@ function loadBgSet(name) {
 // ═══════════════════════════════════════════════════════════════════════════
 // PARALLAX BACKGROUND — vapor_bg image layers
 // ═══════════════════════════════════════════════════════════════════════════
-// _bgImgs[0]=FLAT(static base), [1]=L1_far(par 0.04), [2]=L2_mid(par 0.13), [3]=L3_near(par 0.28)
-const _bgImgs = [null, null, null, null];
-const _BG_PAR = [0, 0.04, 0.13, 0.28];
-const _BG_ALP = [1.0, 0.65, 0.75, 0.85];
+// _bgImgs[0]=base,[1]=L1_far,[2]=L2_mid,[3]=L3_near,[4]=L4_atmo,[5]=L5_vapor
+const _bgImgs = [null, null, null, null, null, null];
+const _BG_PAR = [0, 0.04, 0.13, 0.28, 0.42, 0.60];
+const _BG_ALP = [1.0, 0.55, 0.65, 0.75, 0.80, 0.70];
 
 function _initBG() {
   // No-op — bg images loaded in loadAll, drawn with parallax in drawBG
@@ -587,9 +591,10 @@ async function loadAll() {
   }
 
   // Vapor background layers
-  const _bgFiles = ['vapor_02_FLAT','vapor_02_L1_far','vapor_02_L2_mid','vapor_02_L3_near'];
+  // Driftbound_Blue_Parallax_6Pack
+  const _bgFiles = ["01_far_nebula","02_mid_nebula","03_near_nebula","04_deep_space_base","05_atmosphere_detail","06_foreground_vapor"];
   _bgFiles.forEach((name, i) => {
-    bgLoad(`vapor_bg/${name}.png`, img => { _bgImgs[i] = img; });
+    bgLoad(`Driftbound_Blue_Parallax_6Pack/${name}.png`, img => { _bgImgs[i] = img; });
   });
 
   // Asteroid sprites — background load
@@ -863,12 +868,13 @@ function drawDebris(cx, cy) {
 
 // Nebula drift — values are px/SECOND for each layer.
 // These are intentionally tiny so the gas feels enormous and distant.
-// Observers will only notice movement after watching for several seconds.
 const NEB_LAYERS = [
-  { vx:  0.0, vy:  0.0 },  // [0] FLAT base — completely static anchor
-  { vx:  0.7, vy:  0.22 }, // [1] far layer  — barely imperceptible rightward drift
-  { vx: -0.4, vy:  0.55 }, // [2] mid layer  — slow opposing drift gives depth
-  { vx:  1.2, vy: -0.18 }, // [3] near layer — slightly faster, different angle
+  { vx:  0.0, vy:  0.0 },  // [0] FLAT   -- static anchor
+  { vx:  0.7, vy:  0.22 }, // [1] L1 far -- slow rightward drift
+  { vx: -0.4, vy:  0.55 }, // [2] L2 mid -- opposing drift, depth
+  { vx:  1.2, vy: -0.18 }, // [3] L3 near -- faster, diff angle
+  { vx: -0.9, vy:  0.35 }, // [4] L4 atmo -- slow counter-drift
+  { vx:  1.6, vy:  0.12 }, // [5] L5 vapor -- closest, fastest
 ];
 
 
@@ -2023,7 +2029,7 @@ function drawBG(camX, camY) {
   if (_bgImgs[0]) _drawNebulaLayer(_bgImgs[0], 0, 1.0);
 
   // Drifting nebula layers
-  for (let i = 1; i < 4; i++) {
+  for (let i = 1; i < 6; i++) {
     _drawNebulaLayer(_bgImgs[i], i, _BG_ALP[i]);
   }
 
@@ -3804,21 +3810,19 @@ function update() {
 
 
 
-  // Fuel burns ONLY while boost is actively INCREASING speed (accelerating under Shift+
-  // a direction). Merely holding Shift, coasting, or maintaining the speed cap costs nothing.
+  // Fuel burns whenever Shift + a movement direction is held (actively accelerating under
+  // boost). Holding Shift with no direction pressed costs nothing — you must be thrusting.
   // Power curve: speed^1.4 -- low speed barely sips, high speed drinks hard.
 
-  const _curSpd = Math.hypot(ship.vx, ship.vy);
+  if (shiftHeld && thrusting) {
 
-  if (shiftHeld && thrusting && _curSpd > (ship._prevSpd || 0) + 0.001) {
+    const cur = Math.hypot(ship.vx, ship.vy);
 
-    const burnRate = Math.pow(_curSpd, 1.4) / (PIXELS_PER_MILE * ship.mpg);
+    const burnRate = Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
 
     ship.fuel = Math.max(0, ship.fuel - burnRate);
 
   }
-
-  ship._prevSpd = _curSpd;   // remember this frame's speed for next-frame accel check
 
 
 
