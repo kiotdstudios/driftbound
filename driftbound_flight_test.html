@@ -386,7 +386,7 @@ const POD_BASE = 'pod_sprites/Create_a_small_modular_spacecr/';
 const ANIM_KEY = '8-frame_spaceship_flying_animation._Keep_the_ship';
 
 // ─── MODULAR POD SYSTEM ───────────────────────────────────────────────────────
-const POD_SPRITE_BASE  = 'pod_sprites/Create_a_small_modular_spacecr/';
+const POD_SPRITE_BASE  = 'modular_space_pod/';
 const POD_ANIM_KEY     = '8-frame_spaceship_flying_animation._Keep_the_ship';
 const POD_ATTACH_RANGE = 120;   // world-px — proximity to trigger attach prompt
 const POD_ATTACH_COST  = 10;    // Nebulite ore required to claim a pod
@@ -584,8 +584,6 @@ async function loadAll() {
       const ff = f, pad = String(f).padStart(3, '0');
       bgLoad(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`,
              img => { animations[dir][ff] = img; });
-      bgLoad(`${POD_SPRITE_BASE}animations/${POD_ANIM_KEY}/${dir}/frame_${pad}.png`,
-             img => { podAnimations[dir][ff] = img; });
     }
   }
 
@@ -1668,73 +1666,41 @@ function drawWorldPods(cx, cy) {
     ctx.stroke();
     ctx.restore();
 
-    // ── Draw procedural modular pod ──
+    // ── Draw modular pod sprite (procedural octagon fallback until art loads) ──
     ctx.save();
     ctx.translate(sx, sby);
 
-    // Glow
-    const glowR = inRange ? 22 + pulse * 8 : 10;
+    // Glow halo behind the sprite
+    const glowR = inRange ? 40 + pulse * 10 : 26;
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
-    glow.addColorStop(0, col + (inRange ? 'aa' : '44'));
+    glow.addColorStop(0, col + (inRange ? '55' : '22'));
     glow.addColorStop(1, col + '00');
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill();
 
-    // Main body — octagon
-    ctx.shadowColor = col; ctx.shadowBlur = inRange ? 16 : 6;
-    ctx.fillStyle = '#0d1a2a';
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 1.5;
-    const R = 18;
-    ctx.beginPath();
-    for (let k = 0; k < 8; k++) {
-      const a = (k / 8) * Math.PI * 2 - Math.PI/8;
-      k === 0 ? ctx.moveTo(Math.cos(a)*R, Math.sin(a)*R)
-              : ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R);
-    }
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-
-    // Inner panel lines
-    ctx.strokeStyle = col + '55'; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.moveTo(-10, -5); ctx.lineTo(10, -5); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-10, 0);  ctx.lineTo(10, 0);  ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-10, 5);  ctx.lineTo(10, 5);  ctx.stroke();
-
-    // Docking port center ring
-    ctx.strokeStyle = col; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.stroke();
-    ctx.fillStyle = col + 'cc';
-    ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
-
-    // Solar panels — left and right
-    const panelW = 28, panelH = 7;
-    // Left panel
-    ctx.fillStyle = '#1a2535';
-    ctx.strokeStyle = '#38bdf844';
-    ctx.lineWidth = 0.7;
-    ctx.fillRect(-R - panelW, -panelH/2, panelW, panelH);
-    ctx.strokeRect(-R - panelW, -panelH/2, panelW, panelH);
-    // Panel cells
-    for (let k = 0; k < 4; k++) {
-      ctx.strokeStyle = '#38bdf833';
-      ctx.strokeRect(-R - panelW + k*7 + 1, -panelH/2 + 1, 5, panelH - 2);
-    }
-    // Right panel
-    ctx.fillStyle = '#1a2535';
-    ctx.strokeStyle = '#38bdf844';
-    ctx.fillRect(R, -panelH/2, panelW, panelH);
-    ctx.strokeRect(R, -panelH/2, panelW, panelH);
-    for (let k = 0; k < 4; k++) {
-      ctx.strokeStyle = '#38bdf833';
-      ctx.strokeRect(R + k*7 + 1, -panelH/2 + 1, 5, panelH - 2);
+    const _podSprite = podRotations['south'];
+    if (_podSprite && _podSprite.naturalWidth) {
+      const S = POD_DISPLAY_SIZE;
+      ctx.imageSmoothingEnabled = false;
+      if (inRange) { ctx.shadowColor = col; ctx.shadowBlur = 12; }
+      ctx.drawImage(_podSprite, -S/2, -S/2, S, S);
+      ctx.shadowBlur = 0;
+    } else {
+      // Fallback: procedural octagon (only shown before the sprite finishes loading)
+      ctx.shadowColor = col; ctx.shadowBlur = inRange ? 16 : 6;
+      ctx.fillStyle = '#0d1a2a'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      const R = 18;
+      ctx.beginPath();
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 - Math.PI/8;
+        k === 0 ? ctx.moveTo(Math.cos(a)*R, Math.sin(a)*R) : ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R); }
+      ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
     }
 
-    // Status beacon blink (top-right of body)
+    // Status beacon blink (top-right)
     const blinkOn = Math.floor(t * 2) % 2 === 0;
-    ctx.shadowColor = blinkOn ? '#ff4444' : 'transparent';
-    ctx.shadowBlur  = blinkOn ? 8 : 0;
-    ctx.fillStyle   = blinkOn ? '#ff4444' : '#331111';
-    ctx.beginPath(); ctx.arc(R * 0.55, -R * 0.55, 2.5, 0, Math.PI*2); ctx.fill();
+    if (blinkOn) { ctx.shadowColor = '#ff4444'; ctx.shadowBlur = 8; ctx.fillStyle = '#ff4444'; }
+    else         { ctx.shadowBlur = 0; ctx.fillStyle = '#331111'; }
+    ctx.beginPath(); ctx.arc(POD_DISPLAY_SIZE*0.28, -POD_DISPLAY_SIZE*0.28, 2.5, 0, Math.PI*2); ctx.fill();
     ctx.shadowBlur = 0;
 
     ctx.restore();
@@ -1829,26 +1795,27 @@ function drawAttachedPods(cx, cy) {
       ctx.setLineDash([4,4]);
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
       ctx.setLineDash([]);
-      // draw pod as a glowing hexagon (NOT a ship sprite)
+      // draw pod sprite oriented to ship facing (procedural hexagon fallback until art loads)
       const col = pod.color||"#38bdf8";
-      const pulse = 0.7 + 0.3*Math.sin(t*2.4+idx*1.5);
-      ctx.shadowColor = col; ctx.shadowBlur = 12*pulse;
-      ctx.fillStyle = col+"44";
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for(let k=0;k<6;k++){
-        const a=(k/6)*Math.PI*2 - Math.PI/6;
-        const r=12;
-        k===0?ctx.moveTo(px+Math.cos(a)*r,py+Math.sin(a)*r)
-             :ctx.lineTo(px+Math.cos(a)*r,py+Math.sin(a)*r);
+      const _spr = podRotations[ship.dir] || podRotations['south'];
+      if (_spr && _spr.naturalWidth) {
+        const S = 46;
+        ctx.imageSmoothingEnabled = false;
+        ctx.shadowColor = col; ctx.shadowBlur = 6;
+        ctx.drawImage(_spr, px - S/2, py - S/2, S, S);
+        ctx.shadowBlur = 0;
+      } else {
+        const pulse = 0.7 + 0.3*Math.sin(t*2.4+idx*1.5);
+        ctx.shadowColor = col; ctx.shadowBlur = 12*pulse;
+        ctx.fillStyle = col+"44"; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for(let k=0;k<6;k++){ const a=(k/6)*Math.PI*2 - Math.PI/6; const r=12;
+          k===0?ctx.moveTo(px+Math.cos(a)*r,py+Math.sin(a)*r):ctx.lineTo(px+Math.cos(a)*r,py+Math.sin(a)*r); }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fillStyle=col+"cc";
+        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
       }
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      // inner bright core dot
-      ctx.shadowColor=col; ctx.shadowBlur=8;
-      ctx.fillStyle=col+"cc";
-      ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
-      ctx.shadowBlur=0; ctx.restore();
+      ctx.restore();
     });
   }
   if (_autoSaveTimer > 1780) {
