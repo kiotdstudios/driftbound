@@ -955,6 +955,17 @@ window.addEventListener('keyup', e => {
 
 });
 
+// Focus loss / tab switch must clear ALL held input so keys never "stick"
+// (a stuck movement or Shift key would otherwise cause runaway thrust/boost).
+function clearAllInput() {
+  for (const k in keys) keys[k] = false;
+  ship.boostRamp = 0;
+  _thrusting = false;
+  _boosting  = false;
+}
+window.addEventListener('blur', clearAllInput);
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearAllInput(); });
+
 
 
 // ─── MOUSE TRACKING ──────────────────────────────────────────────────────────
@@ -3274,6 +3285,10 @@ function drawDiagnostics() {
     { label:'ORE',          val: cargoUsed()+' / '+CARGO_LIMIT,      col: COL },
     { label:'MAP MODE',     val: mapMode ? 'OPEN' : 'CLOSED',        col: COL },
     { label:'INTERIOR',     val: interiorMode ? 'YES' : 'NO',        col: COL },
+    { label:'THRUST INPUT', val: _thrusting ? 'ON' : 'OFF',           col: _thrusting ? WARN : DIM },
+    { label:'BOOST INPUT',  val: _boosting  ? 'ON' : 'OFF',           col: _boosting  ? WARN : DIM },
+    { label:'ACCEL',        val: _dbgAX.toFixed(3)+' , '+_dbgAY.toFixed(3), col: (_dbgAX||_dbgAY) ? WARN : DIM },
+    { label:'VEL',          val: ship.vx.toFixed(3)+' , '+ship.vy.toFixed(3), col: COL },
   ];
 
   const PH = rows.length * LH + PAD * 2 + 8;
@@ -3596,71 +3611,49 @@ function update() {
   }
   const shiftHeld = !mapMode && (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
 
+  // Boost RAMP-UP is gradual (engine spool). Boost END is IMMEDIATE on Shift release:
+  // releasing Shift instantly stops boost acceleration; existing momentum then coasts.
   if (shiftHeld) {
-
     ship.boostRamp = Math.min(1, ship.boostRamp + BOOST_RAMP_UP);
-
   } else {
-
-    ship.boostRamp = Math.max(0, ship.boostRamp - BOOST_RAMP_DOWN);
-
+    ship.boostRamp = 0;                 // immediate — no lingering boost thrust or cap
   }
-
-  const boosting = ship.boostRamp > 0;
-
-
+  const boosting = shiftHeld;           // boost state tracks LIVE input (visuals + fuel end at once)
 
   let ax = 0, ay = 0, thrusting = false;
-
-
-
   if (!braking) {
-
-    // Thrust lerps smoothly between cruise and boost as ramp moves
-
+    // Thrust lerps between cruise and boost via ramp; drops to cruise instantly when boost ends.
     const t = THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp;
-
     if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
-
     if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
-
     if (!mapMode && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
-
     if (keys['KeyD'] || keys['ArrowRight']) ax += t;
-
     if (ax !== 0 && ay !== 0) { ax *= 0.7071; ay *= 0.7071; }
-
     thrusting = (ax !== 0 || ay !== 0);
-
   }
 
+  // Coast speed = velocity after damping but BEFORE thrust (pure momentum this frame).
+  const dampF    = braking ? BRAKE : FRICTION;
+  const coastSpd = Math.hypot(ship.vx * dampF, ship.vy * dampF);
 
-
-  ship.vx = (ship.vx + ax) * (braking ? BRAKE : FRICTION);
-
-  ship.vy = (ship.vy + ay) * (braking ? BRAKE : FRICTION);
-
-
+  // Integrate: add thrust, then damp.
+  ship.vx = (ship.vx + ax) * dampF;
+  ship.vy = (ship.vy + ay) * dampF;
 
   const spd = Math.hypot(ship.vx, ship.vy);
-
-
-
-  // Speed cap slides between NORMAL_MAX and BOOST_MAX with the ramp
-
-  const effectiveCap = NORMAL_MAX + (BOOST_MAX - NORMAL_MAX) * ship.boostRamp;
-
-  if (spd > effectiveCap) {
-
-    ship.vx = (ship.vx / spd) * effectiveCap;
-
-    ship.vy = (ship.vy / spd) * effectiveCap;
-
+  // Thrust may not push speed above the CURRENT mode cap, but must never force existing
+  // momentum below what pure coasting gives — so ending boost coasts down, never snaps.
+  const modeCap = boosting ? BOOST_MAX : NORMAL_MAX;
+  const allowed = Math.max(modeCap, coastSpd);
+  if (spd > allowed && spd > 0.0001) {
+    ship.vx = (ship.vx / spd) * allowed;
+    ship.vy = (ship.vy / spd) * allowed;
   }
 
+  // Expose per-frame acceleration for the F2 debug readout.
+  _dbgAX = ax; _dbgAY = ay;
 
-
-  if (spd < 0.01) { ship.vx = 0; ship.vy = 0; }
+  if (Math.hypot(ship.vx, ship.vy) < 0.01) { ship.vx = 0; ship.vy = 0; }
 
   // ─── COLLISION DETECTION ───────────────────────────────────────────────────────────
 
@@ -4364,6 +4357,7 @@ function handleServerMsg(msg) {
 let _lastSend = 0;
 let _thrusting = false;
 let _boosting  = false;
+let _dbgAX     = 0, _dbgAY = 0;   // last-frame accel (F2 debug readout)
 let _ePressed  = false;
 
 // ── INTERIOR SYSTEM ──────────────────────────────────────────
