@@ -144,6 +144,73 @@ const ctx    = canvas.getContext('2d');
 
 ctx.imageSmoothingEnabled = false;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DEV MONITOR — persistent dev log. Never blocks the game.
+// Console API: DevLog.dump() | DevLog.errors() | DevLog.recent(n) | DevLog.clear()
+// Stored in localStorage under key 'driftbound_devlog_v1' (separate from saves)
+// ═══════════════════════════════════════════════════════════════════════════
+const DevLog = (() => {
+  const STORE_KEY  = 'driftbound_devlog_v1';
+  const MAX_ENTRIES = 300;
+  const ROTATE_TO   = 200;
+
+  let _buf = [];
+  try {
+    const stored = localStorage.getItem(STORE_KEY);
+    if (stored) { const p = JSON.parse(stored); if (Array.isArray(p)) _buf = p; }
+  } catch(e) { _buf = []; }
+
+  function _ts() {
+    const d = new Date();
+    return d.toLocaleTimeString('en-US',{hour12:false}) + '.' +
+           String(d.getMilliseconds()).padStart(3,'0');
+  }
+
+  function _flush() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(_buf)); } catch(e) { /* never block */ }
+  }
+
+  function _write(level, system, message, ctx) {
+    try {
+      const entry = { ts:_ts(), level, system, message };
+      if (ctx !== undefined) entry.ctx = ctx;
+      _buf.push(entry);
+      if (_buf.length >= MAX_ENTRIES) {
+        _buf = _buf.slice(_buf.length - ROTATE_TO);
+        _buf.unshift({ ts:_ts(), level:'INFO', system:'DevLog',
+          message:`[rotated — keeping newest ${ROTATE_TO} entries]` });
+      }
+      _flush();
+      if (level === 'CRITICAL' || level === 'ERROR')
+        console.error(`[DB ${level}][${system}] ${message}`, ctx||'');
+      else if (level === 'WARNING')
+        console.warn(`[DB WARNING][${system}] ${message}`, ctx||'');
+    } catch(e) { /* logging must never throw */ }
+  }
+
+  const api = {
+    info    : (s,m,c) => _write('INFO',     s, m, c),
+    warn    : (s,m,c) => _write('WARNING',  s, m, c),
+    error   : (s,m,c) => _write('ERROR',    s, m, c),
+    critical: (s,m,c) => _write('CRITICAL', s, m, c),
+
+    dump   : ()   => { console.table(_buf); return [..._buf]; },
+    errors : ()   => { const e=_buf.filter(x=>x.level==='ERROR'||x.level==='CRITICAL');
+                       console.table(e); return e; },
+    recent : (n=20) => { const r=_buf.slice(-(n||20)); console.table(r); return r; },
+    clear  : ()   => { _buf=[]; _flush(); console.log('[DevLog] cleared'); },
+    get entries()    { return [..._buf]; },
+    get errorCount() { return _buf.filter(x=>x.level==='ERROR'||x.level==='CRITICAL').length; },
+  };
+
+  window.DevLog = api;
+  return api;
+})();
+
+DevLog.info('DevLog', 'Session started', { href: location.href, ts: new Date().toISOString() });
+
+
+
 
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -478,7 +545,10 @@ async function loadAll() {
     totalAssets++;
     const img = new Image();
     img.onload  = () => { loadedAssets++; refreshBar(); if (onDone) onDone(img); };
-    img.onerror = () => { loadedAssets++; refreshBar(); };
+    img.onerror = () => {
+      loadedAssets++; refreshBar();
+      DevLog.warn('Assets', 'Failed to load: ' + src);
+    };
     img.src = src;
   }
 
@@ -2958,13 +3028,13 @@ function saveGame() {
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  } catch(e) { console.warn('Save failed:', e); }
+  } catch(e) { console.warn('Save failed:', e); DevLog.error('SaveSystem', 'saveGame failed', e?.message||String(e)); }
 }
 
 function loadGame() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
+    if (!raw) { DevLog.info('SaveSystem','No save found — fresh start'); return false; }
     const data = JSON.parse(raw);
 
     ship.worldX       = data.worldX       || 0;
@@ -3003,6 +3073,7 @@ function loadGame() {
     return true;
   } catch(e) {
     console.warn('Load failed:', e);
+    DevLog.error('SaveSystem', 'loadGame failed — save may be corrupt', e?.message||String(e));
     return false;
   }
 }
@@ -3025,6 +3096,87 @@ function tickAutoSave() {
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
+// ─── STARTUP HEALTH CHECK ──────────────────────────────────────────────────
+function runHealthCheck() {
+  const issues = [];
+
+  // Canvas
+  if (!canvas || !ctx)
+    issues.push({ level:'CRITICAL', msg:'Canvas or 2D context missing' });
+
+  // Ship type definition
+  if (!SHIP_TYPE || typeof SHIP_TYPE.name !== 'string')
+    issues.push({ level:'ERROR', msg:'SHIP_TYPE not defined correctly', ctx: typeof SHIP_TYPE });
+
+  // Asteroid type definitions
+  if (!Array.isArray(ASTEROID_TYPES) || ASTEROID_TYPES.length === 0)
+    issues.push({ level:'ERROR', msg:'ASTEROID_TYPES empty or missing' });
+
+  // Pod type definitions
+  if (!POD_TYPES || Object.keys(POD_TYPES).length === 0)
+    issues.push({ level:'ERROR', msg:'POD_TYPES empty or missing' });
+
+  // World asteroids
+  try {
+    const asts = getAsteroids();
+    if (!asts || asts.length === 0)
+      issues.push({ level:'WARNING', msg:'No asteroids spawned at startup' });
+    else
+      DevLog.info('HealthCheck', `World asteroids spawned: ${asts.length}`);
+  } catch(e) {
+    issues.push({ level:'ERROR', msg:'getAsteroids() threw', ctx: e?.message });
+  }
+
+  // Ship state
+  if (typeof ship.worldX !== 'number' || typeof ship.worldY !== 'number')
+    issues.push({ level:'CRITICAL', msg:'Ship position not initialized' });
+  if (typeof ship.fuel !== 'number' || isNaN(ship.fuel))
+    issues.push({ level:'ERROR', msg:'Ship fuel is NaN/missing', ctx: ship.fuel });
+  if (typeof ship.hp !== 'number' || isNaN(ship.hp))
+    issues.push({ level:'ERROR', msg:'Ship HP is NaN/missing', ctx: ship.hp });
+
+  // Fuel capacity constant
+  if (typeof FUEL_CAPACITY !== 'number' || FUEL_CAPACITY <= 0)
+    issues.push({ level:'ERROR', msg:'FUEL_CAPACITY invalid', ctx: FUEL_CAPACITY });
+
+  // localStorage availability
+  try {
+    const _k = '__db_healthcheck__';
+    localStorage.setItem(_k, '1');
+    localStorage.removeItem(_k);
+  } catch(e) {
+    issues.push({ level:'ERROR', msg:'localStorage unavailable — saves will fail', ctx: e?.message });
+  }
+
+  // Background images (warn if none loaded; normal to be null on first frame)
+  const bgReady = _bgImgs.filter(x => x !== null).length;
+  if (bgReady === 0)
+    DevLog.info('HealthCheck', 'BG images not yet loaded (normal — async load in progress)');
+
+  // Report
+  const errorCount = issues.filter(i=>i.level==='ERROR'||i.level==='CRITICAL').length;
+  const warnCount  = issues.filter(i=>i.level==='WARNING').length;
+
+  if (issues.length === 0) {
+    DevLog.info('HealthCheck', 'All systems nominal', {
+      shipType: SHIP_TYPE?.name, asteroidTypes: ASTEROID_TYPES?.length,
+      podTypes: Object.keys(POD_TYPES||{}).length,
+    });
+  } else {
+    issues.forEach(i => {
+      if      (i.level==='CRITICAL') DevLog.critical('HealthCheck', i.msg, i.ctx);
+      else if (i.level==='ERROR')    DevLog.error   ('HealthCheck', i.msg, i.ctx);
+      else                           DevLog.warn    ('HealthCheck', i.msg, i.ctx);
+    });
+  }
+
+  const summary = issues.length === 0
+    ? 'OK — no issues'
+    : `${errorCount} error(s), ${warnCount} warning(s)`;
+  console.log(`[DRIFTBOUND] Startup health check: ${summary}. Inspect: DevLog.dump()`);
+}
+
+
 async function boot() {
 
   await loadAll();
@@ -3040,6 +3192,7 @@ async function boot() {
   if (debugMode) drawDebug(speed);
 
   _initBG();
+  runHealthCheck();
   requestAnimationFrame(loop);
 
 }
