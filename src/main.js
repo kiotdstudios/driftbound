@@ -268,6 +268,8 @@ const POD_TYPES = {
     label:      'WRECK',
     color:      '#f97316',
     cargoBonus: 0,
+    mass:       0,          // recoverable cargo, not a structural module
+    connectors: [],         // cannot be docked as a module
     desc:       'Your lost cargo. Press F to recover.',
   },
   modular_space_pod: {
@@ -275,6 +277,8 @@ const POD_TYPES = {
     label:    'MODULAR POD',
     color:    '#38bdf8',
     cargoBonus: 25,   // +25 cargo capacity when attached
+    mass:       40,   // structural mass this module adds to the ship
+    connectors: ['N','E','S','W'],  // faces this pod can present / expose after docking
     desc:     'Expands cargo hold by 25 units.',
   },
 };
@@ -286,6 +290,135 @@ const worldPods = [
 
 // Player's attached pods
 const attachedPods = [];
+
+// ─── SHIP MODULE / CONNECTOR / MASS SYSTEM ──────────────────────────────────
+// Pods do not grant abstract bonuses; each attached pod physically becomes part
+// of the ship as a node in a connector graph (Core -> Pod -> Pod -> ...). All
+// balancing lives in SHIP_BALANCE so it can be tuned without touching logic.
+const SHIP_BALANCE = {
+  coreMass:         100,   // base hull/cockpit mass units
+  cargoMassPerUnit: 0,     // set > 0 to make cargo contribute to mass (architecture ready)
+  // Acceleration falls off with mass: sub-linear and floored so heavy ships stay drivable.
+  accelRefMass:     100,   // mass at which the accel multiplier is exactly 1.0
+  accelMassExp:     0.55,  // accelMult = (accelRefMass / totalMass) ^ accelMassExp
+  accelMultFloor:   0.45,  // accel never drops below this fraction of base
+  // Fuel burn scales with mass on top of the existing speed^1.4 thrust/boost curve.
+  fuelRefMass:      100,
+  fuelMassExp:      0.5,    // fuelMassMult = (totalMass / fuelRefMass) ^ fuelMassExp
+};
+
+// Standardized docking connectors. dir = outward facing in the ship-local frame
+// (north = ship forward = up). The whole assembly is rotated to the ship heading
+// at render time, so a fore-mounted pod swings to starboard when the ship turns.
+const CONNECTOR_GAP = 46;                 // center-to-center distance across a mated pair
+const OPPOSITE_DIR  = { north:'south', south:'north', east:'west', west:'east' };
+const DIR_LOCAL     = { N:'north', E:'east', S:'south', W:'west' };
+const DIR_VEC       = { north:{x:0,y:-1}, south:{x:0,y:1}, east:{x:1,y:0}, west:{x:-1,y:0} };
+// Ship-heading angle (radians, screen y-down clockwise, north = 0) per 8-way facing.
+const HEADING_ANGLE = {
+  north:0, northeast:Math.PI/4, east:Math.PI/2, southeast:3*Math.PI/4,
+  south:Math.PI, southwest:5*Math.PI/4, west:3*Math.PI/2, northwest:7*Math.PI/4,
+};
+function shipHeadingAngle() { return HEADING_ANGLE[ship.dir] ?? 0; }
+function rotLocal(x, y, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return { x: x * c - y * s, y: x * s + y * c };
+}
+
+// The ship assembly graph. Root is the core cockpit ('core'); attached pods are
+// added as child nodes keyed by pod_instance_id. NOT limited to the four core
+// ports: any free connector on any module can host the next pod, so the ship can
+// grow outward as a tree (Core -> Pod -> Pod).
+function freshCoreConnectors() {
+  return [
+    { id:'N', dir:'north', free:true },
+    { id:'E', dir:'east',  free:true },
+    { id:'S', dir:'south', free:true },
+    { id:'W', dir:'west',  free:true },
+  ];
+}
+const shipAssembly = {
+  core: {
+    pod_instance_id:      'core',
+    pod_type_id:          'core',
+    parent:               null,
+    parent_connector:     null,
+    connected_to:         {},          // { connectorId: childInstanceId }
+    local_position:       { x:0, y:0 },// ship-local px, core at origin
+    orientation:          0,           // ship-local radians (0 in checkpoint 1)
+    mass:                 SHIP_BALANCE.coreMass,
+    available_connectors: freshCoreConnectors(),
+    module_state:         'core',
+  },
+};
+
+// Total ship mass = core + every attached module (+ cargo when enabled).
+function computeTotalMass() {
+  let m = 0;
+  for (const id in shipAssembly) m += shipAssembly[id].mass || 0;
+  if (SHIP_BALANCE.cargoMassPerUnit > 0) {
+    const cargoUnits = (ship.ore||0) + (ship.mineral||0) + (ship.armalcolite||0);
+    m += cargoUnits * SHIP_BALANCE.cargoMassPerUnit;
+  }
+  return m;
+}
+function massAccelMult() {
+  const total = computeTotalMass();
+  const raw   = Math.pow(SHIP_BALANCE.accelRefMass / Math.max(1, total), SHIP_BALANCE.accelMassExp);
+  return Math.max(SHIP_BALANCE.accelMultFloor, Math.min(1, raw));
+}
+function massFuelMult() {
+  const total = computeTotalMass();
+  return Math.pow(Math.max(1, total) / SHIP_BALANCE.fuelRefMass, SHIP_BALANCE.fuelMassExp);
+}
+function countFreeConnectors() {
+  let n = 0;
+  for (const id in shipAssembly)
+    for (const c of shipAssembly[id].available_connectors) if (c.free) n++;
+  return n;
+}
+// Find the first free connector across the whole assembly (core first, then pods).
+function findFreeConnector() {
+  const order = ['core', ...Object.keys(shipAssembly).filter(k => k !== 'core')];
+  for (const id of order) {
+    const mod = shipAssembly[id];
+    for (const c of mod.available_connectors) if (c.free) return { mod, conn:c };
+  }
+  return null;
+}
+
+// Build a module node and splice it into the graph at (parentMod, parentConn).
+// The connector the child presents back toward its parent is consumed; its other
+// declared connectors become free ports the ship can keep growing from.
+function makeModuleNode(instId, typeId, parentMod, parentConn) {
+  const type    = POD_TYPES[typeId] || {};
+  const dir     = parentConn.dir;                    // outward direction from parent (ship-local)
+  const worldDir= dir;                               // orientation 0 in checkpoint 1
+  const off     = DIR_VEC[worldDir] || {x:0,y:0};
+  const pos     = {
+    x: parentMod.local_position.x + off.x * CONNECTOR_GAP,
+    y: parentMod.local_position.y + off.y * CONNECTOR_GAP,
+  };
+  const mateDir = OPPOSITE_DIR[worldDir];            // the face pointing back at the parent
+  const faces   = (type.connectors && type.connectors.length) ? type.connectors : ['N','E','S','W'];
+  const conns   = faces.map(f => {
+    const fdir = DIR_LOCAL[f];
+    return { id:f, dir:fdir, free: fdir !== mateDir }; // mated face is consumed
+  });
+  return {
+    pod_instance_id:      instId,
+    pod_type_id:          typeId,
+    parent:               parentMod.pod_instance_id,
+    parent_connector:     parentConn.id,
+    connected_to:         {},
+    local_position:       pos,
+    orientation:          0,
+    mass:                 (type.mass || 0),
+    available_connectors: conns,
+    module_state:         'attached',
+  };
+}
+
 
 // Pod sprite cache
 const podRotations  = {};
@@ -1627,22 +1760,34 @@ function tryClaimWorldPod() {
         }
 
       } else {
-        // Attach module pod
-        if (ship.ore >= POD_ATTACH_COST) {
+        // ── Attach module pod: connector + resource validation, then splice
+        //    it into the ship assembly graph as a physical module. ──
+        const podType = POD_TYPES[pod.type] || {};
+        const canDock = (podType.connectors && podType.connectors.length > 0);
+        const slot    = canDock ? findFreeConnector() : null;
+        if (!canDock || !slot) {
+          showToast('NO AVAILABLE DOCKING PORT', '#ef4444');   // pod stays unattached
+        } else if (ship.ore < POD_ATTACH_COST) {
+          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        } else {
           ship.ore -= POD_ATTACH_COST;
-          const podType = POD_TYPES[pod.type];
-          attachedPods.push({ ...podType, pid: pod.pid });
+          // Build the module node and wire the connector relationship into the graph.
+          const node = makeModuleNode(pod.pid, pod.type, slot.mod, slot.conn);
+          shipAssembly[pod.pid]        = node;
+          slot.conn.free               = false;
+          slot.mod.connected_to[slot.conn.id] = pod.pid;
+          // Keep the legacy gameplay list in sync (cargo/HUD/interior read it).
+          attachedPods.push({ ...podType, pid: pod.pid, mod_id: pod.pid });
           worldPods.splice(i, 1);
           if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
-          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+          showToast('POD DOCKED  ' + slot.mod.pod_instance_id.toUpperCase() + '\u00B7' + slot.conn.id +
+                    '  (+' + (podType.mass||0) + ' MASS)', '#38bdf8');
           saveGame();
           for (let p = 0; p < 30; p++) {
             const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
             particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
               life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
           }
-        } else {
-          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
         }
       }
       return true; // one pod per keypress
@@ -1652,51 +1797,56 @@ function tryClaimWorldPod() {
 }
 
 function drawAttachedPods(cx, cy) {
-  if (attachedPods.length) {
-    const t = Date.now() * 0.001;
-    const DIR_OFFSETS = {
-      north:{ox:0,oy:38},northeast:{ox:-27,oy:27},east:{ox:-38,oy:0},
-      southeast:{ox:-27,oy:-27},south:{ox:0,oy:-38},southwest:{ox:27,oy:-27},
-      west:{ox:38,oy:0},northwest:{ox:27,oy:27},
-    };
-    const off = DIR_OFFSETS[ship.dir] || {ox:0,oy:38};
-    attachedPods.forEach((pod, idx) => {
-      const dist  = 42 + idx * 36;
-      const ratio = dist / 38;
-      const px = cx + off.ox * ratio;
-      const py = cy + off.oy * ratio + Math.sin(t*1.8+idx*1.2)*2;
-      ctx.save();
-      // dashed tether line
-      ctx.strokeStyle = "#38bdf866"; ctx.lineWidth = 1.5;
-      ctx.setLineDash([4,4]);
-      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
-      ctx.setLineDash([]);
-      // draw pod sprite oriented to ship facing (procedural hexagon fallback until art loads)
-      const col = pod.color||"#38bdf8";
-      const _spr = podRotations[ship.dir] || podRotations['south'];
-      if (_spr && _spr.naturalWidth) {
-        const S = 46;
-        ctx.imageSmoothingEnabled = false;
-        ctx.shadowColor = col; ctx.shadowBlur = 6;
-        ctx.drawImage(_spr, px - S/2, py - S/2, S, S);
-        ctx.shadowBlur = 0;
-      } else {
-        const pulse = 0.7 + 0.3*Math.sin(t*2.4+idx*1.5);
-        ctx.shadowColor = col; ctx.shadowBlur = 12*pulse;
-        ctx.fillStyle = col+"44"; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        for(let k=0;k<6;k++){ const a=(k/6)*Math.PI*2 - Math.PI/6; const r=12;
-          k===0?ctx.moveTo(px+Math.cos(a)*r,py+Math.sin(a)*r):ctx.lineTo(px+Math.cos(a)*r,py+Math.sin(a)*r); }
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fillStyle=col+"cc";
-        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
-      }
-      ctx.restore();
-    });
+  const a = shipHeadingAngle();
+  const t = Date.now() * 0.001;
+
+  // ── mechanical struts (parent -> child), drawn behind the pods ──
+  for (const p of attachedPods) {
+    const node = shipAssembly[p.mod_id || p.pid];
+    if (!node) continue;
+    const parent = shipAssembly[node.parent] || shipAssembly.core;
+    const cp = rotLocal(node.local_position.x, node.local_position.y, a);
+    const pp = rotLocal(parent.local_position.x, parent.local_position.y, a);
+    ctx.save();
+    ctx.strokeStyle = (p.color || '#38bdf8') + 'aa';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx + pp.x, cy + pp.y); ctx.lineTo(cx + cp.x, cy + cp.y); ctx.stroke();
+    ctx.restore();
   }
+
+  // ── pod bodies, each fixed in the ship frame and rotated with the ship ──
+  for (const p of attachedPods) {
+    const node = shipAssembly[p.mod_id || p.pid];
+    if (!node) continue;
+    const cp  = rotLocal(node.local_position.x, node.local_position.y, a);
+    const csx = cx + cp.x, csy = cy + cp.y;
+    const col = p.color || '#38bdf8';
+    ctx.save();
+    ctx.translate(csx, csy);
+    ctx.rotate(a);
+    const _spr = podRotations['south'];
+    const S = 52;
+    if (_spr && _spr.naturalWidth) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.shadowColor = col; ctx.shadowBlur = 6;
+      ctx.drawImage(_spr, -S/2, -S/2, S, S);
+      ctx.shadowBlur = 0;
+    } else {
+      const pulse = 0.7 + 0.3 * Math.sin(t * 2.4);
+      ctx.shadowColor = col; ctx.shadowBlur = 12 * pulse;
+      ctx.fillStyle = col + '44'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) { const ang = (k/6)*Math.PI*2 - Math.PI/6; const r = 13;
+        k === 0 ? ctx.moveTo(Math.cos(ang)*r, Math.sin(ang)*r) : ctx.lineTo(Math.cos(ang)*r, Math.sin(ang)*r); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fillStyle = col + 'cc'; ctx.fill();
+    }
+    ctx.restore();
+  }
+
   if (_autoSaveTimer > 1780) {
-    ctx.save(); ctx.textAlign="right"; ctx.font="11px Courier New";
-    ctx.fillStyle="#22c55e"; ctx.fillText("SAVING...", canvas.width-14, 16);
+    ctx.save(); ctx.textAlign = "right"; ctx.font = "11px Courier New";
+    ctx.fillStyle = "#22c55e"; ctx.fillText("SAVING...", canvas.width - 14, 16);
     ctx.restore();
   }
 }
@@ -3473,6 +3623,28 @@ function drawDebug(speed) {
 
 
 
+    divider('SHIP / MASS');
+
+  const _tm = computeTotalMass();
+
+  const _acc = massAccelMult();
+
+  const _fm = massFuelMult();
+
+  row('SHIP MASS',   _tm.toFixed(1), _tm > SHIP_BALANCE.accelRefMass ? WARN : COL);
+
+  row('MODULES',     attachedPods.length + ' pod' + (attachedPods.length === 1 ? '' : 's'));
+
+  row('FREE PORTS',  countFreeConnectors(), countFreeConnectors() === 0 ? WARN : COL);
+
+  row('ACCEL MULT',  (_acc * 100).toFixed(0) + '%', _acc < 0.7 ? WARN : COL);
+
+  row('FUEL EFF',    (1 / _fm * 100).toFixed(0) + '%', _fm > 1.25 ? WARN : COL);
+
+  row('THRUST/MASS', (_acc / _tm * SHIP_BALANCE.accelRefMass).toFixed(3));
+
+
+
   divider('BOOST / FUEL');
 
   const shiftActive = keys['ShiftLeft'] || keys['ShiftRight'];
@@ -3604,7 +3776,8 @@ function update() {
   let ax = 0, ay = 0, thrusting = false;
   if (!braking) {
     // Thrust lerps between cruise and boost via ramp; drops to cruise instantly when boost ends.
-    const t = THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp;
+    // Heavier ships accelerate slower (sub-linear, floored so they stay drivable).
+    const t = (THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp) * massAccelMult();
     if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
     if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
     if (!mapMode && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
@@ -3743,7 +3916,8 @@ function update() {
 
     const cur = Math.hypot(ship.vx, ship.vy);
 
-    const burnRate = Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
+    // fuelBurn = baseBurn(speed^1.4 captures thrust/boost state) x massMultiplier.
+    const burnRate = massFuelMult() * Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
 
     ship.fuel = Math.max(0, ship.fuel - burnRate);
 
@@ -3973,6 +4147,10 @@ function saveGame() {
     hp:           ship.hp,
     cargoLimit:   ship.shipType.cargoLimit,
     attachedPods: attachedPods.map(p => p.pid),
+    // Logical connection graph (not screen coords): reconstruct the ship from these.
+    shipModules: Object.values(shipAssembly)
+      .filter(m => m.pod_instance_id !== 'core')
+      .map(m => ({ id:m.pod_instance_id, type:m.pod_type_id, parent:m.parent, conn:m.parent_connector })),
     worldPodsLeft: worldPods.map(p => p.pid),
     savedAt:      Date.now(),
     username:     localStorage.getItem('driftbound_username') || null,
@@ -4001,14 +4179,45 @@ function loadGame() {
       ship.shipType.cargoLimit = data.cargoLimit;
     }
 
-    // Restore attached pods
-    if (data.attachedPods) {
+    // Restore the ship assembly from the saved connection graph. Reset first so a
+    // reload always rebuilds from connector relationships (never stale coords).
+    for (const k of Object.keys(shipAssembly)) if (k !== 'core') delete shipAssembly[k];
+    shipAssembly.core.connected_to         = {};
+    shipAssembly.core.available_connectors = freshCoreConnectors();
+    shipAssembly.core.mass                 = SHIP_BALANCE.coreMass;
+    attachedPods.length = 0;
+    ship.shipType.cargoLimit = CARGO_LIMIT;   // rebuilt additively by _reattach below
+
+    function _reattach(rec) {
+      const parentMod = shipAssembly[rec.parent];
+      if (!parentMod) return false;                       // parent not placed yet
+      const conn = parentMod.available_connectors.find(c => c.id === rec.conn && c.free)
+                || parentMod.available_connectors.find(c => c.free);
+      if (!conn) return false;                            // no free port (corrupt/incompatible)
+      const type = POD_TYPES[rec.type];
+      if (!type) return false;
+      const node = makeModuleNode(rec.id, rec.type, parentMod, conn);
+      shipAssembly[rec.id]              = node;
+      conn.free                         = false;
+      parentMod.connected_to[conn.id]   = rec.id;
+      attachedPods.push({ ...type, pid: rec.id, mod_id: rec.id });
+      if (type.cargoBonus) ship.shipType.cargoLimit += type.cargoBonus;
+      return true;
+    }
+
+    if (Array.isArray(data.shipModules) && data.shipModules.length) {
+      // Topological placement: keep looping while progress is made (parents before children).
+      let pending = data.shipModules.slice();
+      let guard = pending.length + 2;
+      while (pending.length && guard-- > 0) {
+        pending = pending.filter(rec => !_reattach(rec));
+      }
+    } else if (data.attachedPods) {
+      // Backward-compat with pre-graph saves: dock each old pod onto a free core port.
       data.attachedPods.forEach(pid => {
-        // Find which pod type this was
         const wpod = worldPods.find(p => p.pid === pid);
-        if (wpod) {
-          attachedPods.push({ ...POD_TYPES[wpod.type], pid });
-        }
+        const type = wpod ? wpod.type : 'modular_space_pod';
+        _reattach({ id: pid, type, parent: 'core', conn: null });
       });
     }
 
@@ -4628,4 +4837,11 @@ window.__DB = {
   get DevLog(){ return DevLog; },
   get devControls(){ return devControls; },
   get asteroids(){ return getAsteroids(); },
+  get shipAssembly(){ return shipAssembly; },
+  get totalMass(){ return computeTotalMass(); },
+  get accelMult(){ return massAccelMult(); },
+  get fuelMult(){ return massFuelMult(); },
+  get freeConnectors(){ return countFreeConnectors(); },
+  saveGame(){ return saveGame(); },
+  loadGame(){ return loadGame(); },
 };
