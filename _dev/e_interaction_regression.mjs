@@ -1,0 +1,101 @@
+// E-KEY INTERACTION REGRESSION TEST
+// Verifies the single interaction resolver + edge-trigger + interior state machine.
+// Run: node _dev/e_interaction_regression.mjs   (dev server must be on :8420)
+import { chromium } from 'playwright';
+const URL='http://localhost:8420/driftbound_flight_test.html';
+const b=await chromium.launch({headless:true}); const p=await b.newPage();
+const con=[]; p.on('console',m=>{const t=m.type();if(t==='error')con.push('ERR: '+m.text());}); p.on('pageerror',e=>con.push('PAGEERROR: '+e.message));
+await p.goto(URL,{waitUntil:'domcontentloaded'}); await p.waitForTimeout(1500);
+await p.click('text=PLAY SOLO'); await p.waitForTimeout(800);
+
+let PASS=0, FAIL=0;
+const chk=(name,cond,detail='')=>{ if(cond){PASS++;console.log(`  PASS  ${name}`);} else {FAIL++;console.log(`  FAIL  ${name}  ${detail}`);} };
+const fc=()=>p.evaluate(()=>frameCount);
+const tmLeak=async()=>p.evaluate(()=>{const t=ctx.getTransform();return Math.abs(t.a-1)>0.01||Math.abs(t.d-1)>0.01||Math.abs(t.b)>0.01||Math.abs(t.c)>0.01;});
+async function reset(){ await p.evaluate(()=>{ interiorMode=false;interiorFadeDir=0;interiorFade=0;interiorPodIdx=-1;
+  attachedPods.length=0; worldPods.length=0; mineTarget=null; mineDist=Infinity; ship.mineCooldown=0; ship.vx=0;ship.vy=0; }); }
+async function loopDelta(ms){const a=await fc();await p.waitForTimeout(ms);return (await fc())-a;}
+
+// ---- 1. nothing nearby ----
+console.log('\n[1] E with nothing nearby'); con.length=0; await reset(); await p.waitForTimeout(150);
+await p.keyboard.press('KeyE'); await p.waitForTimeout(300);
+let s=await p.evaluate(()=>({im:interiorMode,fd:interiorFadeDir}));
+chk('interiorMode stays false', s.im===false, JSON.stringify(s));
+chk('no fade started', s.fd===0);
+chk('no transform leak', !(await tmLeak()));
+chk('0 console errors', con.length===0, con.join(' | '));
+
+// ---- 2. asteroid only -> mines ----
+console.log('\n[2] E near asteroid only (should mine)'); con.length=0; await reset();
+await p.evaluate(()=>{ const a=asteroids.find(x=>x.hp>0); a.worldX=ship.worldX+20; a.worldY=ship.worldY;
+  window.__hp0=a.hp; window.__aid=a.aid; });
+await p.waitForTimeout(150); await p.keyboard.down('KeyE'); await p.waitForTimeout(500); await p.keyboard.up('KeyE');
+s=await p.evaluate(()=>{ const a=asteroids.find(x=>x.aid===window.__aid); return {hp:a?a.hp:0,hp0:window.__hp0,im:interiorMode}; });
+chk('asteroid hp decreased (mined)', s.hp<s.hp0, JSON.stringify(s));
+chk('interiorMode stays false', s.im===false);
+chk('no transform leak', !(await tmLeak()));
+chk('0 console errors', con.length===0, con.join(' | '));
+
+// ---- 3. attached pod WITHOUT interior -> nothing ----
+console.log('\n[3] E near attached pod (no interior) -> safe no-op'); con.length=0; await reset();
+await p.evaluate(()=>{ attachedPods.push({label:'CARGO POD',color:'#38bdf8',cargoBonus:20,pid:'t1'}); });
+await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await p.waitForTimeout(300);
+s=await p.evaluate(()=>({im:interiorMode,fd:interiorFadeDir}));
+chk('interiorMode stays false', s.im===false, JSON.stringify(s));
+chk('no fade started', s.fd===0);
+chk('0 console errors', con.length===0, con.join(' | '));
+
+// ---- 4. world pod in range -> claim (edge) ----
+console.log('\n[4] E near world pod -> attaches'); con.length=0; await reset();
+await p.evaluate(()=>{ ship.ore=999; worldPods.push({type:'modular_space_pod',pid:'wp1',worldX:ship.worldX+10,worldY:ship.worldY}); window.__wp=worldPods.length; window.__ap=attachedPods.length; });
+await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await p.waitForTimeout(300);
+s=await p.evaluate(()=>({wp:worldPods.length,ap:attachedPods.length,wp0:window.__wp,ap0:window.__ap}));
+chk('world pod consumed', s.wp<s.wp0, JSON.stringify(s));
+chk('attached pod added', s.ap>s.ap0, JSON.stringify(s));
+chk('0 console errors', con.length===0, con.join(' | '));
+
+// ---- 5. one action per press: world pod + asteroid, single E -> only pod ----
+console.log('\n[5] E with pod AND asteroid in range -> pod only (one action)'); con.length=0; await reset();
+await p.evaluate(()=>{ ship.ore=999;
+  worldPods.push({type:'modular_space_pod',pid:'wp2',worldX:ship.worldX+10,worldY:ship.worldY});
+  const a=asteroids.find(x=>x.hp>0); a.worldX=ship.worldX+20; a.worldY=ship.worldY; window.__hp0=a.hp; window.__aid=a.aid; window.__wp=worldPods.length; });
+await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await p.waitForTimeout(120);
+s=await p.evaluate(()=>{ const a=asteroids.find(x=>x.aid===window.__aid); return {wp:worldPods.length,wp0:window.__wp,hp:a?a.hp:0,hp0:window.__hp0}; });
+chk('pod claimed', s.wp<s.wp0, JSON.stringify(s));
+chk('asteroid NOT mined on same press', s.hp===s.hp0, JSON.stringify(s));
+chk('0 console errors', con.length===0, con.join(' | '));
+
+// ---- 6. interior enter -> render -> exit (the P0 crash path) ----
+console.log('\n[6] E into pod interior: enter, render, exit'); con.length=0; await reset();
+await p.evaluate(()=>{ attachedPods.push({label:'CARGO POD',color:'#38bdf8',hasInterior:true,pid:'ip1'}); });
+await p.waitForTimeout(100);
+const fBefore=await fc();
+await p.keyboard.press('KeyE');
+await p.waitForTimeout(1200); // allow fade-in to complete
+s=await p.evaluate(()=>({im:interiorMode,fd:interiorFadeDir,fade:+interiorFade.toFixed(2)}));
+chk('interiorMode became true', s.im===true, JSON.stringify(s));
+chk('fade completed to 1', s.fade>=0.99, JSON.stringify(s));
+chk('no transform leak in interior', !(await tmLeak()));
+await p.evaluate(()=>{ window.__rafN=0; const _o=window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame=cb=>{ window.__rafN++; return _o(cb); }; });
+await p.waitForTimeout(500);
+const rafN=await p.evaluate(()=>window.__rafN);
+chk('no rAF runaway in interior (single rAF/frame)', rafN>=15 && rafN<=90, 'rAF/500ms='+rafN);
+chk('0 console errors during interior', con.length===0, con.join(' | '));
+// exit via door
+con.length=0;
+await p.evaluate(()=>{ podSecured=true; if(typeof DOOR_COL!=='undefined'){ iPlayerX=DOOR_COL+0.5; iPlayerY=DOOR_ROW+0.5; } });
+const canExit=await p.evaluate(()=>typeof DOOR_COL!=='undefined');
+if(canExit){
+  await p.keyboard.press('KeyE'); await p.waitForTimeout(1200);
+  s=await p.evaluate(()=>({im:interiorMode,fd:interiorFadeDir}));
+  chk('exited interior (back to flight)', s.im===false, JSON.stringify(s));
+  chk('no transform leak after exit', !(await tmLeak()));
+  chk('0 console errors during exit', con.length===0, con.join(' | '));
+} else {
+  console.log('  (skip exit: DOOR_COL not in global scope)');
+}
+
+console.log(`\n===== ${FAIL===0?'ALL PASS':'FAIL'}  ${PASS} passed, ${FAIL} failed =====`);
+await b.close();
+process.exit(FAIL===0?0:1);

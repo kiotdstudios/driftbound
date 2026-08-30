@@ -1,5 +1,4 @@
-        addCamShake(10);
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 
 <html lang="en">
 
@@ -869,7 +868,7 @@ function drawDebris(cx, cy) {
 // Nebula drift — values are px/SECOND for each layer.
 // These are intentionally tiny so the gas feels enormous and distant.
 const NEB_LAYERS = [
-  { vx:  0.0, vy:  0.0 },  // [0] FLAT   -- static anchor
+  { vx:  0.0, vy:  0.0  }, // [0] FLAT base -- completely static (no drift); aligns to _bgImgs[0]
   { vx:  0.7, vy:  0.22 }, // [1] L1 far -- slow rightward drift
   { vx: -0.4, vy:  0.55 }, // [2] L2 mid -- opposing drift, depth
   { vx:  1.2, vy: -0.18 }, // [3] L3 near -- faster, diff angle
@@ -884,6 +883,8 @@ const NEB_LAYERS = [
 window.addEventListener('keydown', e => {
 
   keys[e.code] = true;
+
+  if (e.code === 'KeyE' && !e.repeat) eEdge = true;
 
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
 
@@ -966,6 +967,8 @@ window.addEventListener('keyup', e => {
 // (a stuck movement or Shift key would otherwise cause runaway thrust/boost).
 function clearAllInput() {
   for (const k in keys) keys[k] = false;
+  eEdge = false;
+  _ePressed = false;
   ship.boostRamp = 0;
   _thrusting = false;
   _boosting  = false;
@@ -1295,90 +1298,61 @@ function updateMining() {
 
 
 
-  // E key: mine nearest asteroid
+  // ── SINGLE [E] INTERACTION RESOLVER ──────────────────────────
+  // Exactly ONE E action per frame. Priority order:
+  //   POD INTERIOR ENTER (edge) > WORLD POD CLAIM (edge) > MINE (hold-to-mine)
+  let _eHandled = false;
 
-  // [E] — interior entry (near attached pod) or mine
-  if (keys['KeyE'] && !interiorMode && interiorFadeDir === 0 && attachedPods.length > 0) {
-    // check proximity to any attached pod (drawn ~42-80px from ship centre)
-    const _cx = canvas.width/2, _cy = canvas.height/2;
-    const _DIR_OFF = {
-      north:{ox:0,oy:38},northeast:{ox:-27,oy:27},east:{ox:-38,oy:0},
-      southeast:{ox:-27,oy:-27},south:{ox:0,oy:-38},southwest:{ox:27,oy:-27},
-      west:{ox:38,oy:0},northwest:{ox:27,oy:27},
-    };
-    const _off = _DIR_OFF[ship.dir] || {ox:0,oy:38};
+  // (1) Enter an attached pod's interior. Edge-triggered; pods with an interior only.
+  if (eEdge && !interiorMode && interiorFadeDir === 0) {
     for (let _pi = 0; _pi < attachedPods.length; _pi++) {
-      const _dist = 42 + _pi*36, _ratio = _dist/38;
-      const _pdx = _off.ox*_ratio, _pdy = _off.oy*_ratio;
-      if (Math.hypot(_pdx, _pdy) < 100) {
-        interiorPodIdx = _pi;
+      if (attachedPods[_pi].hasInterior) {
+        interiorPodIdx  = _pi;
         interiorFadeDir = 1;
+        interiorFade    = 0;
         iPlayerX = 4.5; iPlayerY = 6.5;
+        _eHandled = true;
         break;
       }
     }
   }
-  if (keys['KeyE'] && mineTarget) {
 
-    if (ship.mineCooldown <= 0) {
+  // (2) Claim / attach a world pod. Edge-triggered.
+  if (!_eHandled && eEdge) {
+    _eHandled = tryClaimWorldPod();
+  }
 
-      const ast      = mineTarget;
-
-      const isDark   = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
-
-      const asx      = cx + (ast.worldX - camX);
-
-      const asy      = cy + (ast.worldY - camY);
-
-
-
-      ast.hp        -= MINE_DAMAGE;
-      if (multiMode && socket) socket.send(JSON.stringify({ type:'mine', aid: ast.aid, damage: MINE_DAMAGE }));
-
-      ast.flashTimer = 8;
-
-      ship.mineCooldown = MINE_INTERVAL;
-
-      ship.laserWx   = ast.worldX;
-
-      ship.laserWy   = ast.worldY;
-
-      ship.laserTimer = 10;
-
-
-
-      spawnMineChips(asx, asy, isDark);
-
-
-
-      if (ast.hp <= 0) {
-
-        const oreAmt = ast.type.oreMin +
-
-          Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
-
-        orePickups.push({
-
-          worldX: ast.worldX, worldY: ast.worldY,
-
-          amount: oreAmt, life: 480,
-          lootType: ast.type.lootType || null,
-          lootChance: ast.type.lootChance || 0,
-        });
-
-        spawnBreakBurst(asx, asy, isDark);
-
-        if (multiMode && socket) {
-          // Server owns asteroid state — just notify, don't mutate locally
-        } else {
-          asteroids.splice(asteroids.indexOf(ast), 1);
-          toRespawn.push({ timer: 900 });   // respawn ~15s later
-        }
-
+  // (3) Mine the nearest asteroid. Hold-to-mine, only when E claimed nothing else.
+  if (!_eHandled && keys['KeyE'] && mineTarget && ship.mineCooldown <= 0) {
+    const ast      = mineTarget;
+    const isDark   = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
+    const asx      = cx + (ast.worldX - camX);
+    const asy      = cy + (ast.worldY - camY);
+    ast.hp        -= MINE_DAMAGE;
+    if (multiMode && socket) socket.send(JSON.stringify({ type:'mine', aid: ast.aid, damage: MINE_DAMAGE }));
+    ast.flashTimer = 8;
+    ship.mineCooldown = MINE_INTERVAL;
+    ship.laserWx   = ast.worldX;
+    ship.laserWy   = ast.worldY;
+    ship.laserTimer = 10;
+    spawnMineChips(asx, asy, isDark);
+    if (ast.hp <= 0) {
+      const oreAmt = ast.type.oreMin +
+        Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
+      orePickups.push({
+        worldX: ast.worldX, worldY: ast.worldY,
+        amount: oreAmt, life: 480,
+        lootType: ast.type.lootType || null,
+        lootChance: ast.type.lootChance || 0,
+      });
+      spawnBreakBurst(asx, asy, isDark);
+      if (multiMode && socket) {
+        // Server owns asteroid state — just notify, don't mutate locally
+      } else {
+        asteroids.splice(asteroids.indexOf(ast), 1);
+        toRespawn.push({ timer: 900 });   // respawn ~15s later
       }
-
     }
-
   }
 
   if (ship.mineCooldown > 0) ship.mineCooldown--;
@@ -1788,8 +1762,7 @@ function drawWorldPods(cx, cy) {
   }
 }
 
-function updatePods() {
-  if (!keys['KeyE']) return;
+function tryClaimWorldPod() {
   for (let i = worldPods.length - 1; i >= 0; i--) {
     const pod  = worldPods[i];
     const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
@@ -1830,9 +1803,10 @@ function updatePods() {
           showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
         }
       }
-      return; // one pod per keypress
+      return true; // one pod per keypress
     }
   }
+  return false;
 }
 
 function drawAttachedPods(cx, cy) {
@@ -2026,10 +2000,7 @@ function drawBG(camX, camY) {
   }
 
   // FLAT base — completely static (no drift)
-  if (_bgImgs[0]) _drawNebulaLayer(_bgImgs[0], 0, 1.0);
-
-  // Drifting nebula layers
-  for (let i = 1; i < 6; i++) {
+  for (let i = 0; i < 6; i++) {
     _drawNebulaLayer(_bgImgs[i], i, _BG_ALP[i]);
   }
 
@@ -2541,17 +2512,17 @@ function updateInteriorPlayer() {
   // weapon pickup
   if (!weaponPickedUp) {
     const dw = Math.hypot(iPlayerX - WEAPON_PICKUP_POS.col - 0.5, iPlayerY - WEAPON_PICKUP_POS.row - 0.5);
-    if (dw < 1.2 && _ePressed) {
+    if (dw < 1.2 && eEdge) {
       weapon = { type:'pulse_rifle', ammo:24, maxAmmo:24 };
       weaponPickedUp = true;
       showToast('⚡ PULSE RIFLE acquired  24/24');
-      _ePressed = false;
+      eEdge = false;
     }
   }
   // door exit (secured only)
   const onDoor = Math.floor(iPlayerX)===DOOR_COL && Math.floor(iPlayerY)===DOOR_ROW;
-  if (onDoor && podSecured && _ePressed) {
-    interiorFadeDir = -1; _ePressed = false;
+  if (onDoor && podSecured && eEdge) {
+    interiorFadeDir = -1; eEdge = false;
   }
 }
 
@@ -3659,7 +3630,6 @@ function update() {
 
   // Smooth boost ramp: 0=cruise, 1=full boost
 
-  if (interiorMode) { requestAnimationFrame(loop); return; }
   // Map open: freeze ship movement but keep render loop alive for map draw
   if (mapMode) {
     ship.vx *= 0.88;  // gentle bleed-off so ship doesn't fly forever when map closes
@@ -3839,6 +3809,38 @@ function update() {
 
 function loop(now) {
 
+  // Identity transform every frame: no leaked/partial world transform from a prior
+  // frame can survive into this one (the world zoom uses its own save/restore below).
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+
+  // Interior fade state machine. Advances in BOTH flight and interior so the exit
+  // fade keeps progressing while interiorMode is still true.
+  if (interiorFadeDir === 1) {
+    interiorFade = Math.min(1, interiorFade + FADE_SPEED);
+    if (interiorFade >= 1) { interiorMode = true; interiorFadeDir = 0; }
+  } else if (interiorFadeDir === -1) {
+    interiorFade = Math.max(0, interiorFade - FADE_SPEED);
+    if (interiorFade <= 0) { interiorMode = false; interiorFadeDir = 0; interiorPodIdx = -1; }
+  }
+
+  // ── INTERIOR MODE: self-contained render path (no world/flight update or draw) ──
+  if (interiorMode) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    updateInteriorPlayer();
+    drawInterior();
+    if (interiorFade < 1) {                     // exit fade: darken interior toward black
+      ctx.fillStyle = `rgba(0,0,0,${1 - interiorFade})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    drawToast();
+    if (debugMode) drawDebug(0);
+    if (diagMode)  drawDiagnostics();
+    eEdge = false;
+    requestAnimationFrame(loop);
+    return;
+  }
+
   const speed = update();
 
   updateMining();
@@ -3918,7 +3920,6 @@ function loop(now) {
   drawAsteroids(cx, cy);
 
   drawWorldPods(cx, cy);
-  updatePods();
   drawAttachedPods(cx, cy);
   drawMiningLaser(cx, cy);
 
@@ -3976,25 +3977,12 @@ function loop(now) {
   drawHUD(speed);
   drawMinimap();
 
-  // ── INTERIOR FADE + RENDER ──
+  // ── INTERIOR FADE-IN OVERLAY (flight path only) ──
+  // The fade machine and interior render live at the top of loop(); here we only
+  // darken the world while a fade-IN is in progress (interiorMode not yet true).
   if (interiorFadeDir === 1) {
-    interiorFade = Math.min(1, interiorFade + FADE_SPEED);
-    if (interiorFade >= 1) { interiorMode = true; interiorFadeDir = 0; }
-  } else if (interiorFadeDir === -1) {
-    interiorFade = Math.max(0, interiorFade - FADE_SPEED);
-    if (interiorFade <= 0) { interiorMode = false; interiorFadeDir = 0; interiorPodIdx = -1; }
-  }
-  if (interiorFadeDir !== 0 && !interiorMode) {
-    ctx.fillStyle = `rgba(0,0,0,${interiorFadeDir===1 ? interiorFade : 1-interiorFade})`;
+    ctx.fillStyle = `rgba(0,0,0,${interiorFade})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  if (interiorMode) {
-    updateInteriorPlayer();
-    drawInterior();
-    if (interiorFade < 1) {
-      ctx.fillStyle = `rgba(0,0,0,${1 - interiorFade})`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
   }
 
   drawToast();
@@ -4007,6 +3995,7 @@ function loop(now) {
   if (debugMode) drawDebug(speed);
   if (diagMode)  drawDiagnostics();
 
+  eEdge = false;
   requestAnimationFrame(loop);
 
 }
@@ -4415,6 +4404,7 @@ let _thrusting = false;
 let _boosting  = false;
 let _dbgAX     = 0, _dbgAY = 0;   // last-frame accel (F2 debug readout)
 let _ePressed  = false;
+let eEdge      = false;
 
 // ── INTERIOR SYSTEM ──────────────────────────────────────────
 // ── COMBAT & POD STATE ────────────────────────────────────────────────
