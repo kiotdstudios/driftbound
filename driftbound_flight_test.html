@@ -116,7 +116,7 @@
 
   SPACE &mdash; BRAKE<br>
 
-  [ / ] &mdash; CHANGE MAP<br>
+  M &mdash; MAP<br>
 
   E &mdash; MINE ASTEROID<br>
 
@@ -172,6 +172,16 @@ const DevLog = (() => {
 
   function _write(level, system, message, ctx) {
     try {
+      // Dedup: collapse consecutive identical entries; track count+lastTs instead of flooding
+      if (_buf.length > 0) {
+        const last = _buf[_buf.length - 1];
+        if (last.system === system && last.message === message && last.level === level) {
+          last.count  = (last.count || 1) + 1;
+          last.lastTs = _ts();
+          _flush();
+          return;
+        }
+      }
       const entry = { ts:_ts(), level, system, message };
       if (ctx !== undefined) entry.ctx = ctx;
       _buf.push(entry);
@@ -564,6 +574,8 @@ async function loadAll() {
   for (const dir of DIRS) {
     bgLoad(`${POD_BASE}rotations/${dir}.png`,        img => { rotations[dir] = img; });
     bgLoad(`${POD_SPRITE_BASE}rotations/${dir}.png`, img => { podRotations[dir] = img; });
+    animations[dir]    = new Array(FRAME_COUNT).fill(null);
+    podAnimations[dir] = new Array(FRAME_COUNT).fill(null);
     for (let f = 0; f < FRAME_COUNT; f++) {
       const ff = f, pad = String(f).padStart(3, '0');
       bgLoad(`${POD_BASE}animations/${ANIM_KEY}/${dir}/frame_${pad}.png`,
@@ -1546,6 +1558,53 @@ function drawWorldPods(cx, cy) {
       ctx.fillText('[E]  ATTACH POD  (' + POD_ATTACH_COST + ' ORE)', sx, sby + 72);
       ctx.shadowBlur = 0;
       ctx.restore();
+    }
+  }
+}
+
+function updatePods() {
+  if (!keys['KeyE']) return;
+  for (let i = worldPods.length - 1; i >= 0; i--) {
+    const pod  = worldPods[i];
+    const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
+    if (dist < POD_ATTACH_RANGE) {
+
+      if (pod.type === '_wreck') {
+        // Recover wreck cargo
+        const c = pod.cargo || {};
+        ship.ore          += (c.ore          || 0);
+        ship.mineral      += (c.mineral      || 0);
+        ship.armalcolite  += (c.armalcolite  || 0);
+        worldPods.splice(i, 1);
+        const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
+        showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
+        saveGame();
+        for (let p = 0; p < 25; p++) {
+          const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+          particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+            life:40+Math.random()*30,maxLife:70,color:'#f97316',size:2+Math.random()*2});
+        }
+
+      } else {
+        // Attach module pod
+        if (ship.ore >= POD_ATTACH_COST) {
+          ship.ore -= POD_ATTACH_COST;
+          const podType = POD_TYPES[pod.type];
+          attachedPods.push({ ...podType, pid: pod.pid });
+          worldPods.splice(i, 1);
+          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
+          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
+          saveGame();
+          for (let p = 0; p < 30; p++) {
+            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
+            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
+          }
+        } else {
+          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
+        }
+      }
+      return; // one pod per keypress
     }
   }
 }
@@ -3532,7 +3591,33 @@ async function boot() {
 
   _initBG();
   runHealthCheck();
+
+  // Catch uncaught JS exceptions during the game loop and surface them to DevLog
+  const _prevOnError = window.onerror;
+  window.onerror = function(msg, src, line, col, err) {
+    DevLog.critical('RuntimeError', String(msg), { src, line, col, stack: err?.stack });
+    if (typeof _prevOnError === 'function') _prevOnError(msg, src, line, col, err);
+    return false; // don't suppress default browser reporting
+  };
+
   requestAnimationFrame(loop);
+
+  // RUNTIME READY check — runs 800 ms after loop starts to catch first-frame crashes
+  setTimeout(function _runtimeReadyCheck() {
+    const critSinceStart = DevLog.entries.filter(
+      e => (e.level === 'CRITICAL' || e.level === 'ERROR') && e.system === 'RuntimeError'
+    );
+    if (critSinceStart.length === 0) {
+      DevLog.info('HealthCheck', 'RUNTIME READY: PASS — no uncaught exceptions in first 800 ms');
+      console.log('[DRIFTBOUND] RUNTIME READY: PASS');
+    } else {
+      const first = critSinceStart[0];
+      DevLog.critical('HealthCheck',
+        'RUNTIME READY: FAIL — ' + critSinceStart.length + ' uncaught exception(s)',
+        { first: first.message, ctx: first.ctx });
+      console.error('[DRIFTBOUND] RUNTIME READY: FAIL', critSinceStart);
+    }
+  }, 800);
 
 }
 
