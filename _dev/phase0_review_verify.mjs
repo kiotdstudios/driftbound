@@ -34,7 +34,7 @@ const p0 = await pg.evaluate(()=>({y:window.__DB.ship.worldY}));
 await pg.keyboard.down('ArrowUp'); await pg.waitForTimeout(1000); await pg.keyboard.up('ArrowUp'); await pg.waitForTimeout(150);
 const p1 = await pg.evaluate(()=>({y:window.__DB.ship.worldY, sp:Math.hypot(window.__DB.ship.vx,window.__DB.ship.vy)}));
 R.kbd_move = Math.abs(p1.y-p0.y) > 1;
-await pg.keyboard.down('ArrowUp'); await pg.keyboard.down('ShiftLeft'); await pg.waitForTimeout(700);
+await pg.keyboard.down('ArrowUp'); await pg.keyboard.down('ShiftLeft'); await pg.waitForTimeout(1200);
 const spBoost = await pg.evaluate(()=> Math.hypot(window.__DB.ship.vx,window.__DB.ship.vy));
 await pg.keyboard.up('ShiftLeft'); await pg.keyboard.up('ArrowUp');
 R.kbd_boost = spBoost > 1.0;

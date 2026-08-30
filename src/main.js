@@ -2374,35 +2374,48 @@ function updateInteriorPlayer() {
 }
 
 // ─── DEV CONTROLS PANEL ─────────────────────────────────────────────────────
-// Toggleable (F3) reference panel, DEV_MODE only, so temporary test shortcuts
-// never have to be memorised. Dev cheats are read live from DEV_COMMANDS, so
-// any newly-added test key shows up here automatically. Kept out of production
-// (renders only while DEV_MODE is true). Screen-space; self-contained transform.
+// Toggleable (F3) reference panel, DEV_MODE only. While it is open the HTML
+// gameplay legend (#controls, top-right) is hidden so the two never overlap;
+// closing the panel restores it. Screen-space, self-contained transform,
+// near-opaque background so nothing bleeds through. Kept out of production.
+const DEV_PANEL = [
+  { s: 'MOVEMENT' },
+  { k: 'WASD / ARROWS', d: 'Drift' },
+  { k: 'SHIFT',         d: 'Boost' },
+  { k: 'X',             d: 'Brake' },
+  { s: 'VIEW' },
+  { k: 'M',             d: 'Map' },
+  { k: 'F2',            d: 'Diagnostics' },
+  { k: '- / =',         d: 'Zoom' },
+  { k: '0',             d: 'Reset Zoom' },
+  { s: 'DEV CHEATS' },
+  { k: '/',             d: 'Full Fuel' },
+  { k: 'H',             d: 'Full Hull' },
+  { k: 'O',             d: 'Full Oxygen' },
+  { k: 'R',             d: 'Test Resources' },
+  { k: 'P',             d: 'Spawn Test Pod' },
+  { s: 'MISC' },
+  { k: '[ / ]',         d: 'Cycle Background' },
+  { k: 'DELETE',        d: 'Reset Save' },
+];
+
 function drawDevControls() {
-  if (typeof DEV_MODE === 'undefined' || !DEV_MODE || !devControls) return;
+  if (typeof DEV_MODE === 'undefined' || !DEV_MODE) return;   // production: touch nothing
 
-  const cheatLines = Object.values(DEV_COMMANDS).map(c => {
-    const p = String(c.label).split('\u2014');           // labels are 'K — Desc'
-    return '[' + p[0].trim() + ']  ' + (p[1] || '').trim();
-  });
+  // Keep the HTML gameplay legend and the DEV panel mutually exclusive.
+  const _legendEl = (typeof document !== 'undefined') ? document.getElementById('controls') : null;
+  if (_legendEl) {
+    const wantHidden = !!devControls;
+    if ((_legendEl.style.display === 'none') !== wantHidden)
+      _legendEl.style.display = wantHidden ? 'none' : '';
+  }
 
-  const lines = [
-    { s: 'MOVEMENT' },
-    '[Arrows]  Thrust',
-    '[Shift]  Boost',
-    '[X]  Brake',
-    '[E]  Interact / Mine',
-    { s: 'VIEW' },
-    '[- / =]  Zoom',
-    '[0]  Reset Zoom',
-    '[M]  Map',
-    '[F1] Debug   [F2] Diagnostics',
-    { s: 'DEV CHEATS' },
-    ...cheatLines,
-    { s: 'MISC' },
-    '[ [ ] ]  Cycle BG',
-    '[Delete]  Reset Save',
-  ];
+  if (!devControls) return;   // panel closed — legend already restored above
+
+  const PAD = 12, LH = 16, SECT_GAP = 9, TITLE_H = 24, GAP = 16;
+  const TITLE = 'DEV CONTROLS  [F3]';
+  const HFONT = 'bold 11px "Courier New", monospace';
+  const FONT  = '11px "Courier New", monospace';
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2411,37 +2424,59 @@ function drawDevControls() {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 
-  const PAD = 10, LH = 15, HEADH = 24, FONT = '11px "Courier New", monospace';
+  // ── measure: key column width, desc column width, overall width + height ──
   ctx.font = FONT;
-  let maxw = ctx.measureText('DEV CONTROLS  [F3]').width;
-  for (const l of lines) {
-    const txt = (typeof l === 'string') ? l : l.s;
-    maxw = Math.max(maxw, ctx.measureText(txt).width);
+  let keyW = 0, descW = 0, secW = 0;
+  let bodyH = 0;
+  for (const row of DEV_PANEL) {
+    if (row.s) { secW = Math.max(secW, ctx.measureText(row.s).width); bodyH += SECT_GAP + LH; }
+    else {
+      keyW  = Math.max(keyW,  ctx.measureText(row.k).width);
+      descW = Math.max(descW, ctx.measureText(row.d).width);
+      bodyH += LH;
+    }
   }
-  const w = Math.ceil(maxw) + PAD * 2;
-  const h = HEADH + lines.length * LH + PAD;
+  ctx.font = HFONT;
+  const titleW = ctx.measureText(TITLE).width;
+
+  const colBody = keyW + GAP + descW;
+  const contentW = Math.max(titleW, secW, colBody);
+  const w = Math.ceil(contentW) + PAD * 2;
+  const h = TITLE_H + bodyH + PAD;
   const x = canvas.width - w - 12;
   const y = 12;
 
-  ctx.fillStyle = 'rgba(6,12,20,0.84)';
+  // ── background (near-opaque so nothing bleeds through) ──
+  ctx.fillStyle = 'rgba(8,13,20,0.95)';
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#294055';
+  ctx.strokeStyle = '#3a5a72';
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, w, h);
 
+  // ── title ──
+  ctx.font = HFONT;
   ctx.fillStyle = '#a78bfa';
-  ctx.fillText('DEV CONTROLS  [F3]', x + PAD, y + 15);
+  ctx.fillText(TITLE, x + PAD, y + 16);
 
-  let ly = y + HEADH + 11;
-  for (const l of lines) {
-    if (typeof l !== 'string') {
+  // ── rows ──
+  const kx = x + PAD;
+  const dx = x + PAD + keyW + GAP;
+  let ly = y + TITLE_H + 12;
+  for (const row of DEV_PANEL) {
+    if (row.s) {
+      ly += SECT_GAP;
+      ctx.font = HFONT;
       ctx.fillStyle = '#4FC3C3';
-      ctx.fillText(l.s, x + PAD, ly);
+      ctx.fillText(row.s, x + PAD, ly);
+      ly += LH;
     } else {
+      ctx.font = FONT;
+      ctx.fillStyle = '#e6c56a';
+      ctx.fillText(row.k, kx, ly);
       ctx.fillStyle = '#c3d4e0';
-      ctx.fillText(l, x + PAD, ly);
+      ctx.fillText(row.d, dx, ly);
+      ly += LH;
     }
-    ly += LH;
   }
   ctx.restore();
 }
