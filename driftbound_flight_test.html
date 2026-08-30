@@ -458,62 +458,17 @@ function loadBgSet(name) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PROCEDURAL BACKGROUND — seeded LCG, deterministic layout every run
+// PARALLAX BACKGROUND — vapor_bg image layers
 // ═══════════════════════════════════════════════════════════════════════════
-const _BG = { stars: [], nebulae: [], dust: [] };
+// _bgImgs[0]=FLAT(static base), [1]=L1_far(par 0.04), [2]=L2_mid(par 0.13), [3]=L3_near(par 0.28)
+const _bgImgs = [null, null, null, null];
+const _BG_PAR = [0, 0.04, 0.13, 0.28];
+const _BG_ALP = [1.0, 0.65, 0.75, 0.85];
 
 function _initBG() {
-  let _s = 42;
-  const rng = () => { _s = (_s * 1664525 + 1013904223) & 0xFFFFFFFF; return (_s >>> 0) / 0xFFFFFFFF; };
-  const WS2 = WORLD_SIZE * 2;
-
-  // Nebulae
-  const nebPal = [
-    ['rgba(20,5,60,0)','rgba(40,10,100,0.18)'],
-    ['rgba(0,20,50,0)','rgba(0,60,120,0.14)'],
-    ['rgba(30,0,20,0)','rgba(90,10,60,0.12)'],
-    ['rgba(0,30,20,0)','rgba(0,80,60,0.10)'],
-    ['rgba(50,20,0,0)','rgba(120,50,10,0.09)'],
-  ];
-  for (let i = 0; i < 10; i++) {
-    const p = nebPal[Math.floor(rng() * nebPal.length)];
-    _BG.nebulae.push({ wx:(rng()-.5)*WS2*1.4, wy:(rng()-.5)*WS2*1.4,
-      r:.3+rng()*.5, ex:.6+rng()*.8, ey:.4+rng()*.6, rot:rng()*Math.PI*2,
-      a:.55+rng()*.35, par:.08+rng()*.06, c0:p[1], c1:p[0] });
-  }
-
-  // Deep dust (layer 0)
-  for (let i = 0; i < 2200; i++) {
-    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
-      r:.3+rng()*.4, a:.15+rng()*.35, par:.012+rng()*.015, bloom:false,
-      col:`rgb(${180+~~(rng()*60)},${185+~~(rng()*55)},${200+~~(rng()*55)})` });
-  }
-  // Mid stars (layer 1)
-  for (let i = 0; i < 600; i++) {
-    const w = rng()>.5;
-    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
-      r:.5+rng()*.7, a:.45+rng()*.45, par:.05+rng()*.04, bloom:false,
-      col: w ? `rgb(${220+~~(rng()*35)},${200+~~(rng()*40)},${150+~~(rng()*60)})`
-             : `rgb(${160+~~(rng()*60)},${200+~~(rng()*40)},${230+~~(rng()*25)})` });
-  }
-  // Bright stars (layer 2)
-  for (let i = 0; i < 90; i++) {
-    const bloom = rng()>.75, t = rng();
-    const col = t<.3 ? `rgb(255,${160+~~(t*200)},${80+~~(t*100)})`
-              : t<.7 ? `rgb(230,235,255)`
-                     : `rgb(${160+~~((1-t)*200)},${190+~~((1-t)*60)},255)`;
-    _BG.stars.push({ wx:(rng()-.5)*WS2*1.6, wy:(rng()-.5)*WS2*1.6,
-      r:1.0+rng()*1.4, a:.75+rng()*.25, par:.14+rng()*.08, bloom, col });
-  }
-
-  // Dust streaks
-  const dCols=['rgba(80,100,160,1)','rgba(60,80,130,1)','rgba(100,80,140,1)','rgba(60,100,110,1)'];
-  for (let i = 0; i < 45; i++) {
-    _BG.dust.push({ wx:(rng()-.5)*WS2*1.5, wy:(rng()-.5)*WS2*1.5,
-      len:60+rng()*180, rot:rng()*Math.PI*2, a:.04+rng()*.08,
-      par:.28+rng()*.12, col:dCols[~~(rng()*dCols.length)] });
-  }
+  // No-op — bg images loaded in loadAll, drawn with parallax in drawBG
 }
+
 
 async function loadAll() {
   // Boot is instant — all external assets load in background after game starts.
@@ -539,6 +494,12 @@ async function loadAll() {
              img => { podAnimations[dir][ff] = img; });
     }
   }
+
+  // Vapor background layers
+  const _bgFiles = ['vapor_02_FLAT','vapor_02_L1_far','vapor_02_L2_mid','vapor_02_L3_near'];
+  _bgFiles.forEach((name, i) => {
+    bgLoad(`vapor_bg/${name}.png`, img => { _bgImgs[i] = img; });
+  });
 
   // Asteroid sprites — background load
   for (const t of ASTEROID_TYPES) {
@@ -1381,136 +1342,121 @@ function drawWorldPods(cx, cy) {
   for (const pod of worldPods) {
     const sx = cx + (pod.worldX - ship.worldX);
     const sy = cy + (pod.worldY - ship.worldY);
-    if (sx < -100 || sx > canvas.width+100 || sy < -100 || sy > canvas.height+100) continue;
+    if (sx < -140 || sx > canvas.width+140 || sy < -140 || sy > canvas.height+140) continue;
 
-    const podType = POD_TYPES[pod.type];
+    const podType = POD_TYPES[pod.type] || POD_TYPES.modular_space_pod;
     const dist    = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
     const inRange = dist < POD_ATTACH_RANGE;
+    const col     = podType.color || '#38bdf8';
 
-    // Idle slow rotation
-    pod.angle = (pod.angle || 0) + 0.004;
+    // Slow float bob
+    const bob = Math.sin(t * 0.9 + pod.worldX * 0.003) * 3;
+    const sby = sy + bob;
 
-    // Beacon pulse ring
-    const pulse = 0.5 + 0.5 * Math.sin(t * 2 + pod.worldX * 0.01);
+    // ── Outer beacon ring ──
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2 + pod.worldX * 0.01);
     ctx.save();
-    ctx.globalAlpha = inRange ? 0.5 + 0.3 * pulse : 0.2 * pulse;
-    ctx.strokeStyle = inRange ? podType.color : '#ffffff44';
-    ctx.lineWidth   = inRange ? 2 : 1;
+    ctx.globalAlpha = inRange ? 0.55 + 0.3 * pulse : 0.18 * pulse;
+    ctx.strokeStyle = inRange ? col : col + '88';
+    ctx.lineWidth   = inRange ? 1.5 : 1;
     ctx.beginPath();
-    ctx.arc(sx, sy, POD_DISPLAY_SIZE * 0.7 + pulse * 10, 0, Math.PI * 2);
+    ctx.arc(sx, sby, 52 + pulse * 8, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
 
-    // Draw pod sprite (use south rotation, slowly spinning)
-    const spinDir = 'south'; // static direction — pod floats in space
-    const podImg  = podRotations[spinDir];
+    // ── Draw procedural modular pod ──
     ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(pod.angle);
-    if (podImg) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.shadowColor = podType.color;
-      ctx.shadowBlur  = inRange ? 18 : 8;
-      ctx.drawImage(podImg,
-        -POD_DISPLAY_SIZE/2, -POD_DISPLAY_SIZE/2,
-        POD_DISPLAY_SIZE, POD_DISPLAY_SIZE);
-      ctx.shadowBlur = 0;
-    } else {
-      // Fallback hexagon
-      ctx.fillStyle = podType.color + 'aa';
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = (i/6)*Math.PI*2 - Math.PI/2;
-        i === 0 ? ctx.moveTo(Math.cos(a)*28, Math.sin(a)*28)
-                : ctx.lineTo(Math.cos(a)*28, Math.sin(a)*28);
-      }
-      ctx.closePath(); ctx.fill();
+    ctx.translate(sx, sby);
+
+    // Glow
+    const glowR = inRange ? 22 + pulse * 8 : 10;
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+    glow.addColorStop(0, col + (inRange ? 'aa' : '44'));
+    glow.addColorStop(1, col + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill();
+
+    // Main body — octagon
+    ctx.shadowColor = col; ctx.shadowBlur = inRange ? 16 : 6;
+    ctx.fillStyle = '#0d1a2a';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.5;
+    const R = 18;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 - Math.PI/8;
+      k === 0 ? ctx.moveTo(Math.cos(a)*R, Math.sin(a)*R)
+              : ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R);
     }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // Inner panel lines
+    ctx.strokeStyle = col + '55'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(-10, -5); ctx.lineTo(10, -5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-10, 0);  ctx.lineTo(10, 0);  ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-10, 5);  ctx.lineTo(10, 5);  ctx.stroke();
+
+    // Docking port center ring
+    ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = col + 'cc';
+    ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
+
+    // Solar panels — left and right
+    const panelW = 28, panelH = 7;
+    // Left panel
+    ctx.fillStyle = '#1a2535';
+    ctx.strokeStyle = '#38bdf844';
+    ctx.lineWidth = 0.7;
+    ctx.fillRect(-R - panelW, -panelH/2, panelW, panelH);
+    ctx.strokeRect(-R - panelW, -panelH/2, panelW, panelH);
+    // Panel cells
+    for (let k = 0; k < 4; k++) {
+      ctx.strokeStyle = '#38bdf833';
+      ctx.strokeRect(-R - panelW + k*7 + 1, -panelH/2 + 1, 5, panelH - 2);
+    }
+    // Right panel
+    ctx.fillStyle = '#1a2535';
+    ctx.strokeStyle = '#38bdf844';
+    ctx.fillRect(R, -panelH/2, panelW, panelH);
+    ctx.strokeRect(R, -panelH/2, panelW, panelH);
+    for (let k = 0; k < 4; k++) {
+      ctx.strokeStyle = '#38bdf833';
+      ctx.strokeRect(R + k*7 + 1, -panelH/2 + 1, 5, panelH - 2);
+    }
+
+    // Status beacon blink (top-right of body)
+    const blinkOn = Math.floor(t * 2) % 2 === 0;
+    ctx.shadowColor = blinkOn ? '#ff4444' : 'transparent';
+    ctx.shadowBlur  = blinkOn ? 8 : 0;
+    ctx.fillStyle   = blinkOn ? '#ff4444' : '#331111';
+    ctx.beginPath(); ctx.arc(R * 0.55, -R * 0.55, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
     ctx.restore();
 
-    // Label
+    // ── Label ──
     ctx.save();
     ctx.textAlign = 'center';
-    ctx.font      = '12px Courier New';
-    ctx.fillStyle = podType.color;
-    ctx.globalAlpha = inRange ? 1 : 0.6;
-    ctx.fillText(podType.label, sx, sy - POD_DISPLAY_SIZE/2 - 10);
-
-    // Attach prompt when in range
-    if (inRange) {
-      ctx.font = '11px Courier New';
-      if (pod.type === '_wreck') {
-        ctx.fillStyle = '#f97316';
-        ctx.fillText('[F] RECOVER CARGO', sx, sy + POD_DISPLAY_SIZE/2 + 22);
-        ctx.font = '10px Courier New'; ctx.fillStyle = '#ffffff88';
-        const c = pod.cargo || {};
-        const inv = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join('  ');
-        ctx.fillText(inv || 'empty', sx, sy + POD_DISPLAY_SIZE/2 + 38);
-      } else {
-        const canAfford = ship.ore >= POD_ATTACH_COST;
-        ctx.fillStyle = canAfford ? '#22c55e' : '#ef4444';
-        const costTxt = canAfford
-          ? `[F]  ATTACH  (${POD_ATTACH_COST} Nebulite)`
-          : `NEED ${POD_ATTACH_COST} NEBULITE  (have ${ship.ore})`;
-        ctx.fillText(costTxt, sx, sy + POD_DISPLAY_SIZE/2 + 22);
-        ctx.font = '10px Courier New'; ctx.fillStyle = '#ffffff88';
-        ctx.fillText(podType.desc, sx, sy + POD_DISPLAY_SIZE/2 + 38);
-      }
-    }
+    ctx.font      = '11px Courier New';
+    ctx.fillStyle = col;
+    ctx.globalAlpha = inRange ? 1 : 0.55;
+    ctx.fillText(podType.label, sx, sby - 62);
     ctx.restore();
-  }
-}
 
-// ─── ATTACH POD LOGIC ────────────────────────────────────────────────────────
-
-function updatePods() {
-  if (!keys['KeyF']) return;
-  for (let i = worldPods.length - 1; i >= 0; i--) {
-    const pod  = worldPods[i];
-    const dist = Math.hypot(pod.worldX - ship.worldX, pod.worldY - ship.worldY);
-    if (dist < POD_ATTACH_RANGE) {
-
-      if (pod.type === '_wreck') {
-        // ── Recover wreck cargo ──
-        const c = pod.cargo || {};
-        ship.ore          += (c.ore          || 0);
-        ship.mineral      += (c.mineral      || 0);
-        ship.armalcolite  += (c.armalcolite  || 0);
-        worldPods.splice(i, 1);
-        const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
-        showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
-        saveGame();
-        // Burst particles (orange)
-        for (let p = 0; p < 25; p++) {
-          const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
-          particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-            life:40+Math.random()*30,maxLife:70,color:'#f97316',size:2+Math.random()*2});
-        }
-
-      } else {
-        // ── Attach module pod ──
-        if (ship.ore >= POD_ATTACH_COST) {
-          ship.ore -= POD_ATTACH_COST;
-          const podType = POD_TYPES[pod.type];
-          attachedPods.push({ ...podType, pid: pod.pid });
-          worldPods.splice(i, 1);
-          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
-          showToast('POD ATTACHED  +' + (podType.cargoBonus||0) + ' CARGO', '#38bdf8');
-          saveGame();
-          for (let p = 0; p < 30; p++) {
-            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
-            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
-          }
-        } else {
-          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
-        }
-      }
-      return; // one pod per keypress
+    // ── Attach prompt ──
+    if (inRange) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 12px Courier New';
+      ctx.fillStyle = col;
+      ctx.shadowColor = col; ctx.shadowBlur = 8;
+      ctx.fillText('[E]  ATTACH POD  (' + POD_ATTACH_COST + ' ORE)', sx, sby + 72);
+      ctx.shadowBlur = 0;
+      ctx.restore();
     }
   }
 }
-
 
 function drawAttachedPods(cx, cy) {
   if (attachedPods.length) {
@@ -1670,76 +1616,49 @@ function drawToast() {
 
 function drawBG(camX, camY) {
   const W = canvas.width, H = canvas.height;
-  const cx = W / 2, cy = H / 2;
 
-  // ── Deep void base ──
-  ctx.fillStyle = '#020508';
+  // Deep void base — shown when layers haven't loaded yet
+  ctx.fillStyle = '#0a0010';
   ctx.fillRect(0, 0, W, H);
 
-  // ── Vignette ──
-  const vg = ctx.createRadialGradient(cx, cy, H * 0.15, cx, cy, H * 0.85);
+  function _drawLayer(img, par, alpha) {
+    if (!img || !img.naturalWidth) return;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    // scale so the layer fills the canvas height (no black bars)
+    const scale = Math.max(W / iw, H / ih) * 1.04;
+    const sw = Math.ceil(iw * scale);
+    const sh = Math.ceil(ih * scale);
+    const offX = (((-camX * par) % sw) + sw) % sw;
+    const offY = (((-camY * par) % sh) + sh) % sh;
+    ctx.globalAlpha = alpha;
+    for (let x = offX - sw; x < W + sw; x += sw) {
+      for (let y = offY - sh; y < H + sh; y += sh) {
+        ctx.drawImage(img, x, y, sw, sh);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // FLAT base — cover canvas, no parallax
+  if (_bgImgs[0]) {
+    _drawLayer(_bgImgs[0], 0, 1.0);
+  }
+
+  // Parallax layers
+  for (let i = 1; i < 4; i++) {
+    _drawLayer(_bgImgs[i], _BG_PAR[i], _BG_ALP[i]);
+  }
+
+  // Subtle vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, H*0.12, W/2, H/2, H*0.82);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,2,8,0.72)');
+  vg.addColorStop(1, 'rgba(0,0,6,0.55)');
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
-
-  // ── Nebula clouds ──
-  for (const n of _BG.nebulae) {
-    const px = ((n.wx - camX * n.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
-    const py = ((n.wy - camY * n.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
-    const r = n.r * Math.max(W, H);
-    const g = ctx.createRadialGradient(px, py, 0, px, py, r);
-    g.addColorStop(0, n.c0);
-    g.addColorStop(0.5, n.c1);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.save();
-    ctx.globalAlpha = n.a;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.ellipse(px, py, r * n.ex, r * n.ey, n.rot, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  // ── Stars ──
-  for (const s of _BG.stars) {
-    const px = ((s.wx - camX * s.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
-    const py = ((s.wy - camY * s.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
-    if (px < -8 || px > W + 8 || py < -8 || py > H + 8) continue;
-    ctx.globalAlpha = s.a;
-    if (s.bloom) {
-      const bloom = ctx.createRadialGradient(px, py, 0, px, py, s.r * 6);
-      bloom.addColorStop(0, s.col);
-      bloom.addColorStop(0.15, s.col);
-      bloom.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = bloom;
-      ctx.beginPath(); ctx.arc(px, py, s.r * 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = s.col; ctx.lineWidth = 0.5; ctx.globalAlpha = s.a * 0.35;
-      ctx.beginPath(); ctx.moveTo(px - s.r*10, py); ctx.lineTo(px + s.r*10, py); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px, py - s.r*10); ctx.lineTo(px, py + s.r*10); ctx.stroke();
-      ctx.globalAlpha = s.a;
-    }
-    ctx.fillStyle = s.col;
-    ctx.beginPath(); ctx.arc(px, py, s.r, 0, Math.PI * 2); ctx.fill();
-  }
-
-  // ── Dust streaks ──
-  for (const dk of _BG.dust) {
-    const px = ((dk.wx - camX * dk.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cx;
-    const py = ((dk.wy - camY * dk.par) % (WORLD_SIZE * 2) + WORLD_SIZE * 2) % (WORLD_SIZE * 2) - WORLD_SIZE + cy;
-    if (px < -220 || px > W + 220 || py < -220 || py > H + 220) continue;
-    ctx.save();
-    ctx.globalAlpha = dk.a;
-    ctx.translate(px, py); ctx.rotate(dk.rot);
-    const dg = ctx.createRadialGradient(0, 0, 0, 0, 0, dk.len);
-    dg.addColorStop(0, dk.col); dg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = dg; ctx.scale(1, 0.18);
-    ctx.beginPath(); ctx.arc(0, 0, dk.len, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
-  ctx.globalAlpha = 1;
 }
+
+
 
 
 
@@ -1757,8 +1676,8 @@ function drawShip(cx, cy, now, speed) {
     ctx.moveTo(0, -18); ctx.lineTo(12, 14); ctx.lineTo(0, 8);
     ctx.lineTo(-12, 14); ctx.closePath(); ctx.stroke();
     // engine glow
-    if (thrusting || boosting) {
-      ctx.strokeStyle = boosting ? '#ff6b35' : '#00ff88';
+    if (_thrusting || _boosting) {
+      ctx.strokeStyle = _boosting ? '#ff6b35' : '#00ff88';
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(0, 22); ctx.lineTo(7, 10); ctx.stroke();
     }
@@ -2128,214 +2047,362 @@ function updateInteriorPlayer() {
 }
 
 function drawHUD(speed) {
-  const L=18, PW=310, LINE=22;
-  const SML="13px Courier New", MED="15px Courier New";
-  const DIM="#4a6070", TEAL="#4FC3C3", ORANGE="#D9541E", WHT="#c8d8e8";
+  const W = canvas.width, H = canvas.height;
+  const t = Date.now();
+  const TEAL = '#4FC3C3', ORANGE = '#e07b30', WHT = '#d0e4f0', DIM = '#3a5060';
+  const ACC = '#38bdf8'; // accent blue
 
-  function sBar(y, lbl, col) {
-    col = col||TEAL;
-    ctx.fillStyle=col+"28"; ctx.fillRect(10,y-14,PW,18);
-    ctx.fillStyle=col;      ctx.fillRect(10,y-14,3,18);
-    ctx.font="bold 11px Courier New"; ctx.fillStyle=col;
-    ctx.fillText(lbl, L+6, y);
+  // ─── Panel geometry ───
+  const PX = 14, PY = 14, PW = 248;
+  const fuelPct   = ship.fuel / FUEL_CAPACITY;
+  const hpPct     = ship.hp / SHIP_MAX_HP;
+  const cUsed     = cargoUsed();
+  const cMax      = (ship.shipType ? ship.shipType.cargoLimit : 50) +
+                    attachedPods.reduce((s,p)=>s+(p.cargoBonus||0), 0);
+  const cFull     = cUsed >= cMax;
+  const resLines  = (ship.ore>0?1:0) + (ship.mineral>0?1:0) + (ship.armalcolite>0?1:0);
+  const podLines  = attachedPods.length;
+  const PH        = 192 + resLines*20 + (podLines?(podLines*18+10):0);
+
+  // Background panel
+  ctx.save();
+  ctx.fillStyle = 'rgba(2,6,14,0.82)';
+  roundRect(ctx, PX, PY, PW, PH, 4);
+  ctx.fill();
+  ctx.strokeStyle = TEAL + '28'; ctx.lineWidth = 1;
+  roundRect(ctx, PX, PY, PW, PH, 4);
+  ctx.stroke();
+  // Left accent bar
+  ctx.fillStyle = TEAL;
+  ctx.fillRect(PX, PY, 2, PH);
+  ctx.restore();
+
+  const L = PX + 14;
+  let y = PY + 18;
+  const SML = '11px "Courier New", monospace';
+  const MED = '13px "Courier New", monospace';
+
+  // Ship name + compass
+  ctx.save();
+  ctx.font = 'bold 13px "Courier New", monospace';
+  ctx.fillStyle = TEAL;
+  ctx.shadowColor = TEAL; ctx.shadowBlur = 6;
+  ctx.fillText('◈  ' + (ship.shipType ? ship.shipType.name.toUpperCase() : 'SHIP'), L, y);
+  ctx.shadowBlur = 0;
+
+  // Inline mini-compass (top-right of panel)
+  const cx2 = PX + PW - 22, cy2 = y - 4, cr = 11;
+  ctx.strokeStyle = DIM; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI*2); ctx.stroke();
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = TEAL; ctx.lineWidth = 1.8;
+    ctx.shadowColor = TEAL; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.moveTo(cx2, cy2);
+    ctx.lineTo(cx2 + Math.cos(da)*(cr-2), cy2 + Math.sin(da)*(cr-2)); ctx.stroke();
+    ctx.shadowBlur = 0;
   }
-  function kv(key,val,x,y,vc) {
-    ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText(key,x,y);
-    ctx.font=MED; ctx.fillStyle=vc||WHT; ctx.fillText(val,x+68,y);
+  ctx.restore();
+
+  y += 5;
+
+  // ── Helper: labeled mini bar ──
+  function miniBar(label, pct, col1, col2, valStr, warnCol) {
+    ctx.font = SML; ctx.fillStyle = DIM;
+    ctx.fillText(label, L, y);
+    const bx = L + 54, bw = PW - 74, bh = 6, by = y - 7;
+    ctx.fillStyle = '#0a1828'; ctx.fillRect(bx, by, bw, bh);
+    const g = ctx.createLinearGradient(bx, 0, bx+bw, 0);
+    g.addColorStop(0, col1); g.addColorStop(1, col2||col1);
+    ctx.fillStyle = g; ctx.fillRect(bx, by, bw * Math.min(pct,1), bh);
+    ctx.strokeStyle = '#ffffff0d'; ctx.lineWidth = 0.5; ctx.strokeRect(bx, by, bw, bh);
+    if (valStr) {
+      ctx.font = SML; ctx.fillStyle = warnCol || WHT;
+      ctx.textAlign = 'right';
+      ctx.fillText(valStr, PX + PW - 8, y);
+      ctx.textAlign = 'left';
+    }
+    y += 18;
   }
-  function hbar(x,y,w,h,pct,c1,c2) {
-    ctx.fillStyle="#0d1520"; ctx.fillRect(x-1,y-1,w+2,h+2);
-    const g=ctx.createLinearGradient(x,0,x+w,0);
-    g.addColorStop(0,c1); g.addColorStop(1,c2||c1);
-    ctx.fillStyle=g; ctx.fillRect(x,y,w*Math.min(pct,1),h);
-    ctx.strokeStyle="#ffffff14"; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
-  }
 
-  const resCount=(ship.ore>0?1:0)+(ship.mineral>0?1:0)+(ship.armalcolite>0?1:0);
-  const modRows =attachedPods.length;
-  const netRow  =(typeof multiMode!=="undefined"&&multiMode)?1:0;
-  const fuelWarning=(ship.fuel<=0||ship.fuel/FUEL_CAPACITY<0.2)?1:0;
-  const emptyHold=(cargoUsed()===0)?1:0;
-  // base: nav(24+66+26) + ship_sbar(24) + thrust(20) + hull(20) + fuel(20) + cargo_sbar(24) + cargo_bar(14) + actions_sbar(24) + actions_rows(44) + padding(34)
-  const BASE_H = 24+66+26 + 24+20+20+20 + 24+14 + 24+44 + 34;
-  const panelH = BASE_H
-    + fuelWarning*LINE
-    + resCount*LINE
-    + emptyHold*LINE
-    + (modRows?(LINE+2+modRows*LINE):0)
-    + (netRow?(LINE+2+LINE):0);
+  // Speed
+  const boostActive = _boosting && ship.fuel > 0;
+  miniBar('SPD', speed / BOOST_MAX,
+    '#2a6a8a', boostActive ? '#ff6b35' : TEAL,
+    speed.toFixed(2),
+    boostActive ? '#ff8855' : WHT);
 
-  ctx.fillStyle="#000000e0"; ctx.fillRect(10,10,PW,panelH);
-  ctx.strokeStyle=TEAL+"30"; ctx.lineWidth=1; ctx.strokeRect(10,10,PW,panelH);
-  ctx.fillStyle=TEAL+"50";   ctx.fillRect(10,10,3,panelH);
+  // Hull
+  miniBar('HULL', hpPct,
+    hpPct>0.5?'#1d6e3d':hpPct>0.25?'#7a5500':'#6b0000',
+    hpPct>0.5?'#36e878':hpPct>0.25?'#ffbb00':'#ff3333',
+    ship.hp + '/' + SHIP_MAX_HP,
+    hpPct < 0.25 ? '#ff4444' : WHT);
 
-  let y=30;
-
-  // NAVIGATION
-  sBar(y,"NAVIGATION",TEAL); y+=LINE+2;
-  kv("SPD",speed.toFixed(2),L,y); y+=LINE;
-  kv("DIR",ship.dir.replace("-"," ").toUpperCase(),L,y); y+=LINE;
-  kv("POS",Math.floor(ship.worldX)+" / "+Math.floor(ship.worldY),L,y); y+=LINE+4;
-
-  // SHIP
-  sBar(y,"SHIP  "+ship.shipType.name,TEAL); y+=LINE+2;
-  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("THRUST",L,y); y+=4;
-  hbar(L,y,PW-28,7,speed/BOOST_MAX,"#4FC3C3","#ff2222"); y+=16;
-  const hpPct=ship.hp/SHIP_MAX_HP;
-  ctx.font=SML; ctx.fillStyle=DIM; ctx.fillText("HULL",L,y);
-  ctx.font=SML; ctx.fillStyle=hpPct<0.25?"#ff4444":WHT;
-  ctx.fillText(ship.hp+" / "+SHIP_MAX_HP,L+68,y); y+=4;
-  hbar(L,y,PW-28,7,hpPct,
-    hpPct>0.5?"#22bb55":hpPct>0.25?"#aa6600":"#880000",
-    hpPct>0.5?"#44ff88":hpPct>0.25?"#ffcc00":"#ff2222"); y+=16;
-  const fuelPct=ship.fuel/FUEL_CAPACITY;
-  const segW=Math.floor((PW-28)/10)-2, filledSegs=Math.ceil(fuelPct*10);
-  const fuelBurning=_boosting && ship.fuel>0;
-  const _ft=Date.now();
-  // label — glow orange-white when burning
-  ctx.font=SML;
-  if(fuelBurning){
-    ctx.shadowColor="#ff8800"; ctx.shadowBlur=8;
-    ctx.fillStyle="#ffcc66";
+  // Fuel — segmented bar with flame flicker when burning
+  ctx.font = SML;
+  if (boostActive) {
+    ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 6;
+    ctx.fillStyle = '#ffcc55';
   } else {
-    ctx.shadowBlur=0; ctx.fillStyle=DIM;
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = fuelPct < 0.2 ? ORANGE : DIM;
   }
-  ctx.fillText("FUEL",L,y);
-  ctx.shadowBlur=0;
-  ctx.font=SML; ctx.fillStyle=fuelPct<0.25?ORANGE:WHT;
-  ctx.fillText(ship.fuel.toFixed(1)+" gal",L+68,y); y+=4;
-  for(let i=0;i<10;i++){
-    const lit=i<filledSegs;
-    let segCol;
-    if(!lit){
-      segCol="#0d1520";
-    } else if(fuelBurning){
-      // flame flicker: each segment pulses with staggered sine at different phase
-      const flicker=0.55+0.45*Math.sin(_ft*0.018+i*0.9);
-      const r=Math.round(255);
-      const g=Math.round(80+120*flicker);
-      const b=Math.round(10+30*flicker);
-      segCol=`rgb(${r},${g},${b})`;
+  ctx.fillText('FUEL', L, y);
+  ctx.shadowBlur = 0;
+  ctx.font = SML;
+  ctx.fillStyle = fuelPct < 0.2 ? ORANGE : WHT;
+  ctx.textAlign = 'right';
+  ctx.fillText(ship.fuel.toFixed(1) + ' gal', PX+PW-8, y);
+  ctx.textAlign = 'left';
+  const segCount = 10, segW = Math.floor((PW-74)/segCount)-2;
+  const bx0 = L + 54;
+  for (let i = 0; i < segCount; i++) {
+    const lit = i < Math.ceil(fuelPct * segCount);
+    let sc;
+    if (!lit) {
+      sc = '#0a1828';
+    } else if (boostActive) {
+      const flk = 0.55 + 0.45 * Math.sin(t * 0.018 + i * 0.9);
+      sc = `rgb(255,${Math.round(80+120*flk)},${Math.round(10+30*flk)})`;
     } else {
-      segCol=fuelPct>0.5?"#3db87a":fuelPct>0.25?"#e6c040":
-        (fuelPct<0.1&&Math.floor(_ft/300)%2===0)?"#ff2222":ORANGE;
+      sc = fuelPct > 0.5 ? '#2a9e5a' : fuelPct > 0.25 ? '#c8a020' : ORANGE;
     }
-    ctx.fillStyle=segCol;
-    if(fuelBurning&&lit){
-      ctx.shadowColor="#ff6600"; ctx.shadowBlur=6+4*Math.sin(_ft*0.02+i);
-    }
-    ctx.fillRect(L+i*(segW+2),y,segW,10);
-    ctx.shadowBlur=0;
-    ctx.strokeStyle="#4FC3C318"; ctx.lineWidth=0.5;
-    ctx.strokeRect(L+i*(segW+2),y,segW,10);
+    if (boostActive && lit) { ctx.shadowColor='#ff6600'; ctx.shadowBlur = 4+3*Math.sin(t*0.02+i); }
+    ctx.fillStyle = sc;
+    ctx.fillRect(bx0 + i*(segW+2), y-7, segW, 7);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle='#4FC3C315'; ctx.lineWidth=0.5;
+    ctx.strokeRect(bx0 + i*(segW+2), y-7, segW, 7);
   }
-  // exhaust spark: tiny bright pip on the rightmost lit seg when burning
-  if(fuelBurning&&filledSegs>0){
-    const sx=L+(filledSegs-1)*(segW+2)+segW;
-    const sy=y+5;
-    ctx.fillStyle="#ffffff";
-    ctx.shadowColor="#ffaa00"; ctx.shadowBlur=10;
-    ctx.fillRect(sx-1,sy-1,3,3);
-    ctx.shadowBlur=0;
-  }
-  y+=16;
-  if(ship.fuel<=0){ctx.font=SML;ctx.fillStyle="#ff4444";ctx.fillText("✕ FUEL EMPTY",L,y);y+=LINE;}
-  else if(fuelPct<0.2&&Math.floor(_ft/500)%2===0){ctx.font=SML;ctx.fillStyle=ORANGE;ctx.fillText("⚠ LOW FUEL",L,y);y+=LINE;}
+  y += 18;
 
-  // Hull death overlay
-  if(ship.hp<=0){
-    if(!ship.destroyed){ship.destroyed=true;ship.destroyedAt=Date.now();
-      for(let i=0;i<60;i++){const ang=Math.random()*Math.PI*2,spd=1+Math.random()*5;
-        particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-          life:80+Math.random()*60,maxLife:140,
-          color:["#ff4444","#ff8800","#ffcc00","#ffffff"][Math.floor(Math.random()*4)],size:2+Math.random()*4});}}
-    const elapsed=Date.now()-(ship.destroyedAt||Date.now()),remaining=Math.ceil((4000-elapsed)/1000);
-    ctx.fillStyle="#000000bb";ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.textAlign="center";
-    ctx.font="bold 32px Courier New";ctx.fillStyle="#ff2222";ctx.fillText("✕  SHIP DESTROYED",canvas.width/2,canvas.height/2-30);
-    ctx.font="20px Courier New";ctx.fillStyle="#ff8800";
-    ctx.fillText("RESPAWNING IN "+Math.max(0,remaining)+"...",canvas.width/2,canvas.height/2+14);
-    ctx.textAlign="left";
-    if(elapsed>=4000){
-      if(ship.ore>0||ship.mineral>0||ship.armalcolite>0){
-        worldPods.push({pid:"wreck_"+Date.now(),type:"_wreck",
-          worldX:ship.worldX+(Math.random()-0.5)*40,worldY:ship.worldY+(Math.random()-0.5)*40,
-          angle:Math.random()*Math.PI*2,
-          cargo:{ore:ship.ore,mineral:ship.mineral,armalcolite:ship.armalcolite},label:"WRECK"});}
-      ship.ore=0;ship.mineral=0;ship.armalcolite=0;
-      ship.hp=SHIP_MAX_HP;ship.worldX=(Math.random()-0.5)*300;ship.worldY=(Math.random()-0.5)*300;
-      ship.vx=0;ship.vy=0;ship.destroyed=false;saveGame();
-      showToast("RESPAWNED — cargo lost. Find your wreck.","#f97316");
-    }
-    return;
+  // Fuel warnings
+  if (ship.fuel <= 0) {
+    ctx.font=SML; ctx.fillStyle='#ff4444';
+    ctx.fillText('✕  FUEL EMPTY — ADRIFT', L, y); y+=18;
+  } else if (fuelPct < 0.2 && Math.floor(t/500)%2===0) {
+    ctx.font=SML; ctx.fillStyle=ORANGE;
+    ctx.fillText('⚠  LOW FUEL', L, y); y+=18;
   }
 
-  // CARGO
-  sBar(y,"CARGO","#f59e0b"); y+=LINE+2;
-  const cUsed=cargoUsed(),cMax=ship.shipType.cargoLimit||CARGO_LIMIT;
-  const cPct=Math.min(cUsed/cMax,1),cFull=cUsed>=cMax;
-  hbar(L,y,PW-60,6,cPct,
-    cPct<0.7?"#4FC3C3":cPct<0.95?ORANGE:"#ff2222",
-    cPct<0.7?"#22aacc":cPct<0.95?"#ffaa44":"#ff6666");
-  ctx.font=SML; ctx.fillStyle=cFull?"#ef4444":WHT;
-  ctx.fillText(cUsed+" / "+cMax+(cFull?"  FULL":""),L+(PW-54),y+6); y+=14;
-  if(ship.ore>0){ctx.font="bold 14px monospace";ctx.fillStyle="#FFD700";ctx.fillText("◆",L+4,y);ctx.font=MED;ctx.fillStyle="#FFD700";ctx.fillText(ship.ore+"  NEBULITE",L+18,y);y+=LINE;}
-  if(ship.mineral>0){ctx.font="bold 14px monospace";ctx.fillStyle="#a78bfa";ctx.fillText("♦",L+4,y);ctx.font=MED;ctx.fillStyle="#c4b5fd";ctx.fillText(ship.mineral+"  MINERAL",L+18,y);y+=LINE;}
-  if(ship.armalcolite>0){ctx.font="bold 14px monospace";ctx.fillStyle="#34d399";ctx.fillText("◈",L+4,y);ctx.font=MED;ctx.fillStyle="#6ee7b7";ctx.fillText(ship.armalcolite+"  ARMALCOLITE",L+18,y);y+=LINE;}
-  if(cUsed===0){ctx.font=SML;ctx.fillStyle=DIM;ctx.fillText("empty hold",L+4,y);y+=LINE;}
+  // ── Separator ──
+  ctx.strokeStyle = TEAL+'18'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(PX+6, y); ctx.lineTo(PX+PW-6, y); ctx.stroke();
+  y += 10;
 
-  // MODULES
-  if(attachedPods.length){
-    sBar(y,"MODULES","#38bdf8"); y+=LINE+2;
+  // ── Cargo ──
+  ctx.font = SML; ctx.fillStyle = cFull ? '#ef4444' : DIM;
+  ctx.fillText('CARGO', L, y);
+  ctx.font = SML; ctx.fillStyle = cFull ? '#ef4444' : WHT;
+  ctx.textAlign = 'right';
+  ctx.fillText(cUsed+' / '+cMax+(cFull?' FULL':''), PX+PW-8, y);
+  ctx.textAlign = 'left';
+  y += 18;
+
+  // Cargo bar
+  const cbw = PW - 28, cbh = 4;
+  ctx.fillStyle = '#0a1828'; ctx.fillRect(L, y-4, cbw, cbh);
+  const cg = ctx.createLinearGradient(L, 0, L+cbw, 0);
+  cg.addColorStop(0, '#2a6a8a'); cg.addColorStop(1, cFull?'#ef4444':ACC);
+  ctx.fillStyle = cg; ctx.fillRect(L, y-4, cbw*(cUsed/Math.max(cMax,1)), cbh);
+  ctx.strokeStyle = '#ffffff0d'; ctx.lineWidth=0.5; ctx.strokeRect(L, y-4, cbw, cbh);
+  y += 12;
+
+  if (ship.ore > 0) {
+    ctx.font=MED; ctx.fillStyle='#FFD700';
+    ctx.fillText('◆ '+ship.ore+'  NEBULITE', L+4, y); y+=20;
+  }
+  if (ship.mineral > 0) {
+    ctx.font=MED; ctx.fillStyle='#c4b5fd';
+    ctx.fillText('♦ '+ship.mineral+'  MINERAL', L+4, y); y+=20;
+  }
+  if (ship.armalcolite > 0) {
+    ctx.font=MED; ctx.fillStyle='#6ee7b7';
+    ctx.fillText('◈ '+ship.armalcolite+'  ARMALCOLITE', L+4, y); y+=20;
+  }
+  if (cUsed === 0) {
+    ctx.font=SML; ctx.fillStyle=DIM;
+    ctx.fillText('— empty hold —', L+4, y); y+=20;
+  }
+
+  // ── Attached pods ──
+  if (attachedPods.length) {
+    ctx.strokeStyle=ACC+'18'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(PX+6,y); ctx.lineTo(PX+PW-6,y); ctx.stroke();
+    y+=10;
     attachedPods.forEach(p=>{
-      ctx.font="bold 13px monospace";ctx.fillStyle=p.color||"#38bdf8";ctx.fillText("⦿",L+4,y);
-      ctx.font=SML;ctx.fillStyle=p.color||"#38bdf8";ctx.fillText(p.label,L+18,y);
-      if(p.cargoBonus){ctx.fillStyle=DIM;ctx.fillText("+"+p.cargoBonus+" cargo",L+120,y);}
-      y+=LINE;
+      ctx.font=MED; ctx.fillStyle=p.color||ACC;
+      ctx.fillText('⦿  '+p.label+(p.cargoBonus?' +'+p.cargoBonus+' cargo':''), L+4, y); y+=18;
     });
   }
 
-  // ACTIONS
-  sBar(y,"ACTIONS","#64748b"); y+=LINE+2;
-  const canCraft=ship.armalcolite>0;
+  // ── Actions (context-sensitive, compact) ──
+  ctx.strokeStyle=TEAL+'18'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(PX+6,y+4); ctx.lineTo(PX+PW-6,y+4); ctx.stroke();
+  y+=16;
+
+  const canCraft = ship.armalcolite > 0;
   ctx.font=SML;
-  ctx.fillStyle=canCraft?"#FFD700":DIM; ctx.fillText("[C]",L,y);
-  ctx.fillStyle=canCraft?WHT:DIM; ctx.fillText("REFINE  1 ARM → +"+FUEL_PER_CRAFT.toFixed(1)+" FUEL",L+26,y); y+=LINE;
-  ctx.fillStyle=mineTarget?TEAL:DIM; ctx.fillText("[E]",L,y);
+  ctx.fillStyle=canCraft?'#FFD700':DIM;
+  ctx.fillText('[C]', L, y);
+  ctx.fillStyle=canCraft?WHT:DIM;
+  ctx.fillText(' REFINE → +'+FUEL_PER_CRAFT.toFixed(1)+' FUEL', L+20, y);
+  y+=18;
+
+  ctx.fillStyle=mineTarget?TEAL:DIM;
+  ctx.fillText('[E]', L, y);
   ctx.fillStyle=mineTarget?WHT:DIM;
-  ctx.fillText("MINE"+(mineTarget?"  "+Math.round(mineDist)+"px":""),L+26,y); y+=LINE;
+  ctx.fillText(' MINE'+(mineTarget?' '+Math.round(mineDist)+'px':''), L+20, y);
+  y+=18;
 
-  // NETWORK
-  if(typeof multiMode!=="undefined"&&multiMode){
-    sBar(y,"NETWORK","#38bdf8"); y+=LINE+2;
-    ctx.font=SML; ctx.fillStyle="#38bdf8";
-    ctx.fillText("■  "+(Object.keys(remotePlayers).length+1)+" pilots online",L,y); y+=LINE;
-  }
+  // Pos (small, bottom of panel)
+  ctx.font='10px "Courier New",monospace'; ctx.fillStyle=DIM;
+  ctx.fillText(Math.floor(ship.worldX)+' / '+Math.floor(ship.worldY), L, y);
 
-  // Mini compass
-  const cx2=10+PW-36,cy2=58,r=22;
-  ctx.strokeStyle="#1a2a3a"; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.arc(cx2,cy2,r,0,Math.PI*2); ctx.stroke();
-  const dirIdx=DIRS.indexOf(ship.dir);
-  if(dirIdx>=0){
-    const a=DIR_ANGLES_DEG[dirIdx]*(Math.PI/180);
-    ctx.strokeStyle=TEAL; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(cx2,cy2);
-    ctx.lineTo(cx2+Math.cos(a)*(r-4),cy2+Math.sin(a)*(r-4)); ctx.stroke();
-    ctx.fillStyle=TEAL;
-    ctx.beginPath(); ctx.arc(cx2+Math.cos(a)*(r-4),cy2+Math.sin(a)*(r-4),3,0,Math.PI*2); ctx.fill();
-  }
-  ctx.fillStyle="#1a2a3a88"; ctx.beginPath(); ctx.arc(cx2,cy2,3,0,Math.PI*2); ctx.fill();
-
-  // Map zone flash
-  if(bgFlash&&bgFlash.timer>0){
-    const alpha=Math.min(1,bgFlash.timer/30);
-    ctx.globalAlpha=alpha; ctx.fillStyle=TEAL;
-    ctx.font="18px Courier New"; ctx.textAlign="center";
-    ctx.fillText("MAP: "+bgFlash.name.replace("_"," ").toUpperCase(),canvas.width/2,canvas.height-30);
-    ctx.textAlign="left"; ctx.globalAlpha=1; bgFlash.timer--;
+  // ── Map name flash ──
+  if (bgFlash && bgFlash.timer > 0) {
+    const fa = Math.min(1, bgFlash.timer/30);
+    ctx.save(); ctx.globalAlpha=fa;
+    ctx.textAlign='center'; ctx.font='bold 14px "Courier New",monospace';
+    ctx.fillStyle=TEAL; ctx.shadowColor=TEAL; ctx.shadowBlur=12;
+    ctx.fillText('MAP: '+bgFlash.name.replace('_',' ').toUpperCase(), W/2, H-30);
+    ctx.restore();
+    bgFlash.timer--;
   }
 }
+
+// Helper: rounded rect path
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+
+// ─── MINIMAP ─────────────────────────────────────────────────────────────────
+function drawMinimap() {
+  const W = canvas.width, H = canvas.height;
+  const MR = 72;                    // minimap radius px
+  const MX = W - MR - 16;          // center x
+  const MY = H - MR - 16;          // center y
+  const SCALE = MR / 1400;         // world-px to minimap-px  (1400 world = 1 minimap radius)
+  const t = Date.now();
+
+  ctx.save();
+
+  // Clip to circle
+  ctx.beginPath(); ctx.arc(MX, MY, MR, 0, Math.PI*2); ctx.clip();
+
+  // Background
+  ctx.fillStyle = 'rgba(2,8,18,0.88)';
+  ctx.fillRect(MX-MR, MY-MR, MR*2, MR*2);
+
+  // Subtle grid rings
+  ctx.strokeStyle = '#4FC3C310'; ctx.lineWidth = 0.5;
+  for (let r = MR/3; r <= MR; r += MR/3) {
+    ctx.beginPath(); ctx.arc(MX, MY, r, 0, Math.PI*2); ctx.stroke();
+  }
+  // Cross hairs
+  ctx.beginPath(); ctx.moveTo(MX-MR, MY); ctx.lineTo(MX+MR, MY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(MX, MY-MR); ctx.lineTo(MX, MY+MR); ctx.stroke();
+
+  // ── Asteroids — orange dots ──
+  for (const ast of getAsteroids()) {
+    const dx = (ast.worldX - ship.worldX) * SCALE;
+    const dy = (ast.worldY - ship.worldY) * SCALE;
+    if (dx*dx + dy*dy > MR*MR) continue;
+    const sz = Math.max(1.5, (ast.type ? ast.type.w / 20 : 2));
+    ctx.fillStyle = '#f97316';
+    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 3;
+    ctx.beginPath(); ctx.arc(MX+dx, MY+dy, sz, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // ── Ore pickups — green dots ──
+  if (typeof orePickups !== 'undefined') {
+    for (const o of orePickups) {
+      const dx = (o.worldX - ship.worldX) * SCALE;
+      const dy = (o.worldY - ship.worldY) * SCALE;
+      if (dx*dx + dy*dy > MR*MR) continue;
+      ctx.fillStyle = '#22c55e';
+      ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 4;
+      ctx.beginPath(); ctx.arc(MX+dx, MY+dy, 2, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  // ── World pods — cyan blips (pulsing) ──
+  const blink = 0.6 + 0.4 * Math.sin(t * 0.004);
+  for (const pod of worldPods) {
+    const dx = (pod.worldX - ship.worldX) * SCALE;
+    const dy = (pod.worldY - ship.worldY) * SCALE;
+    if (dx*dx + dy*dy > MR*MR) continue;
+    const pCol = (POD_TYPES[pod.type]||{}).color || '#38bdf8';
+    ctx.fillStyle = pCol;
+    ctx.shadowColor = pCol; ctx.shadowBlur = 5 * blink;
+    ctx.globalAlpha = blink;
+    ctx.beginPath(); ctx.arc(MX+dx, MY+dy, 3, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.shadowBlur = 0;
+
+  // ── Player dot — white center ──
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(MX, MY, 3.5, 0, Math.PI*2); ctx.fill();
+
+  // Player direction tick
+  const dIdx = DIRS.indexOf(ship.dir);
+  if (dIdx >= 0) {
+    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
+    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.moveTo(MX + Math.cos(da)*5, MY + Math.sin(da)*5);
+    ctx.lineTo(MX + Math.cos(da)*10, MY + Math.sin(da)*10);
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  ctx.restore();  // end clip
+
+  // ── Outer border ring ──
+  ctx.strokeStyle = '#4FC3C3';
+  ctx.lineWidth = 1.2;
+  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.arc(MX, MY, MR, 0, Math.PI*2); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Label
+  ctx.save();
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillStyle = '#4FC3C388';
+  ctx.textAlign = 'center';
+  ctx.fillText('SECTOR MAP', MX, MY + MR + 12);
+  ctx.restore();
+
+  // Legend — tiny, bottom-right corner under ring
+  const lx = MX - MR + 4, ly = MY + MR - 22;
+  ctx.save(); ctx.font = '8px "Courier New", monospace';
+  ctx.fillStyle = '#f97316'; ctx.beginPath(); ctx.arc(lx+4, ly, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f9731688'; ctx.fillText('AST', lx+10, ly+3);
+  ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(lx+4, ly+10, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#38bdf888'; ctx.fillText('POD', lx+10, ly+13);
+  ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.arc(lx+4, ly+20, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#22c55e88'; ctx.fillText('ORE', lx+10, ly+23);
+  ctx.restore();
+}
+
 
 function drawDebug(speed) {
 
@@ -2835,6 +2902,7 @@ function loop(now) {
 
   drawShip(cx, cy, now, speed);
   drawHUD(speed);
+  drawMinimap();
 
   // ── INTERIOR FADE + RENDER ──
   if (interiorFadeDir === 1) {
