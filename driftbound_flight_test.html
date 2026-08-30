@@ -240,7 +240,7 @@ const BOOST_MAX    = 5.28;  // shift-hold cap — burns fuel, fast
 
 const BOOST_THRUST = 0.294; // -30% accel  // higher thrust while Shift held — punchy acceleration
 
-const BOOST_RAMP_UP   = 0.022; // ramp to full boost: ~45 frames — slow engine spool
+const BOOST_RAMP_UP   = 0.011; // ramp to full boost: ~90 frames (~1.5s) — gentle engine spool
 
 const BOOST_RAMP_DOWN = 0.006; // ramp back to cruise: ~167 frames — long inertia coast
 
@@ -3804,19 +3804,21 @@ function update() {
 
 
 
-  // Fuel burns when Shift is physically held + thrusting (not just during ramp-down).
-
+  // Fuel burns ONLY while boost is actively INCREASING speed (accelerating under Shift+
+  // a direction). Merely holding Shift, coasting, or maintaining the speed cap costs nothing.
   // Power curve: speed^1.4 -- low speed barely sips, high speed drinks hard.
 
-  if (shiftHeld && thrusting) {
+  const _curSpd = Math.hypot(ship.vx, ship.vy);
 
-    const cur = Math.hypot(ship.vx, ship.vy);
+  if (shiftHeld && thrusting && _curSpd > (ship._prevSpd || 0) + 0.001) {
 
-    const burnRate = Math.pow(cur, 1.4) / (PIXELS_PER_MILE * ship.mpg);
+    const burnRate = Math.pow(_curSpd, 1.4) / (PIXELS_PER_MILE * ship.mpg);
 
     ship.fuel = Math.max(0, ship.fuel - burnRate);
 
   }
+
+  ship._prevSpd = _curSpd;   // remember this frame's speed for next-frame accel check
 
 
 
