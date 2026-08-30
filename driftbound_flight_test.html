@@ -677,6 +677,7 @@ function showToast(msg) { toastMsg = msg; toastTimer = 150; }
 
 let debugMode    = false;       // F1 toggles debug overlay
 let diagMode     = false;       // F2 toggles dev diagnostics overlay
+let _hudBounds   = null;        // DEV/test: when array, drawHUD records per-row {y0,y1} bounds
 
 // DEV_MODE — enables in-flight cheat shortcuts for rapid testing.
 // Set to false before any public build.
@@ -2551,6 +2552,7 @@ function updateInteriorPlayer() {
 function drawHUD(speed) {
   const W = canvas.width, H = canvas.height;
   const t = Date.now();
+  if (_hudBounds !== null) _hudBounds = [];
 
   // ── Palette ──
   const TEAL   = '#4FC3C3';
@@ -2566,13 +2568,13 @@ function drawHUD(speed) {
   const PW     = 240;  // panel width
   const PX     = 14;   // panel left edge from screen
   const PY_TOP = 14;   // panel top edge from screen
-  const R_H    = 18;   // standard row height
+  const R_H    = 19;   // standard row height (a touch taller — breathing room)
   const B_H    =  4;   // bar fill height
-  const B_OFF  =  4;   // bar top from row top (so bar is vertically centered)
+  const B_OFF  =  5;   // bar top from row top (so bar is vertically centered)
   const TXT    = 13;   // text baseline offset from row top (consistent across all rows)
-  const DIV_A  =  4;   // space above divider line
-  const DIV_B  =  6;   // space below divider line  (total divider block = DIV_A + 1 + DIV_B = 11)
-  const SEC_B  =  4;   // space below section label
+  const DIV_A  =  7;   // space above divider line (consistent divider padding)
+  const DIV_B  =  7;   // space below divider line
+  const SEC_B  =  5;   // space below section label
 
   // ── Derived values ──
   const fuelPct    = ship.fuel / FUEL_CAPACITY;
@@ -2642,11 +2644,15 @@ function drawHUD(speed) {
   ctx.fillRect(PX, PY_TOP, 2, PH);            // left accent bar
   ctx.restore();
 
-  // ── Content layout ──
-  const L  = PX + PAD_X;         // left text start x
-  const R  = PX + PW - PAD_X;    // right-aligned values end x
-  const LV = L + 48;             // label column right edge / bar left edge
-  const BW = R - LV;             // bar width
+  // ── Content layout columns (fixed; nothing positions by text width) ──
+  //   Row grid:  [labelX ..]  [gaugeX .. gaugeX+gaugeW]   GAP   [.. valueX]
+  //   The gauge and the value occupy separate X ranges and can never overlap.
+  const L       = PX + PAD_X;               // labelX — left text start
+  const R       = PX + PW - PAD_X;          // valueX — right-aligned value column edge
+  const VALUE_W = 60;                       // reserved width for the value column
+  const GAP     = 8;                        // gap between gauge and value column
+  const LV      = L + 44;                   // gaugeX — bar left edge
+  const BW      = (R - VALUE_W - GAP) - LV; // gaugeW — bar width (value column stays clear)
 
   let y = PY_TOP + PAD_Y;
 
@@ -2656,8 +2662,20 @@ function drawHUD(speed) {
   const F_SEC = '10px "Courier New",monospace';
   const F_XSM = '10px "Courier New",monospace';
 
+  // ── DEV: collision-box overlay (F2). Boxes each layout row so overlaps are obvious. ──
+  const HDBG = DEV_MODE && diagMode;
+  function hbox(y0) {
+    if (_hudBounds !== null) _hudBounds.push({ y0, y1: y });
+    if (!HDBG) return;
+    ctx.save();
+    ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(PX + 1.5, y0 + 0.5, PW - 3, (y - y0) - 1);
+    ctx.restore();
+  }
+
   // ── helper: bar row (label + fill bar + right-aligned value) ──
   function barRow(label, pct, c0, c1, valStr, valCol) {
+    const _y0 = y;
     ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
     ctx.fillText(label, L, y + TXT);
     const bx = LV, by = y + B_OFF;
@@ -2675,10 +2693,12 @@ function drawHUD(speed) {
       ctx.textAlign = 'left';
     }
     y += R_H;
+    hbox(_y0);
   }
 
   // ── helper: plain text row (left label + optional right value) ──
   function txtRow(label, val, lCol, vCol) {
+    const _y0 = y;
     ctx.font = F_SML; ctx.fillStyle = lCol || DIM; ctx.textAlign = 'left';
     ctx.fillText(label, L, y + TXT);
     if (val !== undefined) {
@@ -2687,10 +2707,12 @@ function drawHUD(speed) {
       ctx.textAlign = 'left';
     }
     y += R_H;
+    hbox(_y0);
   }
 
   // ── helper: section divider + label ──
   function section(label) {
+    const _y0 = y;
     y += DIV_A;
     ctx.strokeStyle = TEAL + '20'; ctx.lineWidth = 0.75;
     ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
@@ -2698,6 +2720,7 @@ function drawHUD(speed) {
     ctx.font = F_SEC; ctx.fillStyle = TEAL + '99'; ctx.textAlign = 'left';
     ctx.fillText(label, L, y + TXT - 1);
     y += R_H + SEC_B;
+    hbox(_y0);
   }
 
   // ════════════════════════════════════════════
@@ -2756,6 +2779,7 @@ function drawHUD(speed) {
     hpPct < 0.25 ? ERR : WHT);
 
   // Fuel — segmented bar (custom renderer)
+  const _yFuel = y;
   ctx.font = F_SML; ctx.textAlign = 'left';
   if (boostOn) { ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 5; ctx.fillStyle = '#ffcc55'; }
   else         { ctx.shadowBlur = 0; ctx.fillStyle = fuelLow ? ORANGE : DIM; }
@@ -2786,17 +2810,22 @@ function drawHUD(speed) {
   ctx.fillText(ship.fuel.toFixed(1) + ' gal', R, y + TXT);
   ctx.textAlign = 'left';
   y += R_H;
+  hbox(_yFuel);
 
   // Fuel warning (only when applicable — height already reserved in PH)
   if (fuelEmpty) {
+    const _yw = y;
     ctx.font = F_SML; ctx.fillStyle = ERR; ctx.textAlign = 'left';
     ctx.fillText('✕  FUEL EMPTY — ADRIFT', L, y + TXT);
     y += R_H;
+    hbox(_yw);
   } else if (fuelLow) {
+    const _yw = y;
     const blink = Math.floor(t / 500) % 2 === 0;
     ctx.font = F_SML; ctx.fillStyle = blink ? '#ffaa00' : ORANGE; ctx.textAlign = 'left';
     ctx.fillText('⚠  LOW FUEL', L, y + TXT);
     y += R_H;
+    hbox(_yw);
   }
 
   // ════════════════════════════════════════════
@@ -2805,14 +2834,17 @@ function drawHUD(speed) {
   section('CARGO');
 
   // Hold header row
+  const _yHold = y;
   ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : DIM; ctx.textAlign = 'left';
   ctx.fillText('HOLD', L, y + TXT);
   ctx.font = F_SML; ctx.fillStyle = cFull ? ERR : WHT; ctx.textAlign = 'right';
   ctx.fillText(cUsed + ' / ' + cMax + (cFull ? '  ●FULL' : ''), R, y + TXT);
   ctx.textAlign = 'left';
   y += R_H;
+  hbox(_yHold);
 
   // Cargo fill bar (thin, full panel width)
+  const _yBar = y;
   const cbx = L, cby = y + B_OFF, cbw = PW - PAD_X * 2, cbh = B_H;
   ctx.fillStyle = '#08111e'; ctx.fillRect(cbx, cby, cbw, cbh);
   const cg = ctx.createLinearGradient(cbx, 0, cbx + cbw, 0);
@@ -2822,27 +2854,36 @@ function drawHUD(speed) {
   ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
   ctx.strokeRect(cbx, cby, cbw, cbh);
   y += B_OFF + B_H + 5;
+  hbox(_yBar);
 
   // Resource rows
   if (emptyHold) {
+    const _yr = y;
     ctx.font = F_SML; ctx.fillStyle = DIM; ctx.textAlign = 'left';
     ctx.fillText('— empty hold —', L + 6, y + TXT);
     y += R_H;
+    hbox(_yr);
   } else {
     if (ship.ore > 0) {
+      const _yr = y;
       ctx.font = F_MED; ctx.fillStyle = '#FFD700'; ctx.textAlign = 'left';
       ctx.fillText('◆  ' + ship.ore + '  NEBULITE', L + 4, y + TXT);
       y += R_H;
+      hbox(_yr);
     }
     if (ship.mineral > 0) {
+      const _yr = y;
       ctx.font = F_MED; ctx.fillStyle = '#c4b5fd'; ctx.textAlign = 'left';
       ctx.fillText('♦  ' + ship.mineral + '  MINERAL', L + 4, y + TXT);
       y += R_H;
+      hbox(_yr);
     }
     if (ship.armalcolite > 0) {
+      const _yr = y;
       ctx.font = F_MED; ctx.fillStyle = '#6ee7b7'; ctx.textAlign = 'left';
       ctx.fillText('◈  ' + ship.armalcolite + '  ARMALCOLITE', L + 4, y + TXT);
       y += R_H;
+      hbox(_yr);
     }
   }
 
@@ -2853,9 +2894,11 @@ function drawHUD(speed) {
     ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
     y += 1 + DIV_B;
     attachedPods.forEach(p => {
+      const _yp = y;
       ctx.font = F_MED; ctx.fillStyle = p.color || ACC; ctx.textAlign = 'left';
       ctx.fillText('⦿  ' + p.label + (p.cargoBonus ? '  +' + p.cargoBonus + ' cargo' : ''), L + 4, y + TXT);
       y += R_H;
+      hbox(_yp);
     });
   }
 
@@ -2868,28 +2911,35 @@ function drawHUD(speed) {
   ctx.textAlign = 'left';
 
   // [C] Refine
+  const _yC = y;
   ctx.font = F_SML; ctx.fillStyle = canCraft ? '#FFD700' : DIM;
   ctx.fillText('[C]', L, y + TXT);
   ctx.fillStyle = canCraft ? WHT : DIM;
   ctx.fillText(' REFINE  →  +' + FUEL_PER_CRAFT.toFixed(1) + ' FUEL', L + 22, y + TXT);
   y += R_H;
+  hbox(_yC);
 
   // [E] Mine
+  const _yE = y;
   ctx.font = F_SML; ctx.fillStyle = mineTarget ? TEAL : DIM;
   ctx.fillText('[E]', L, y + TXT);
   ctx.fillStyle = mineTarget ? WHT : DIM;
   ctx.fillText(' MINE' + (mineTarget ? '  ' + Math.round(mineDist) + ' px' : ''), L + 22, y + TXT);
   y += R_H;
+  hbox(_yE);
 
   // ════════════════════════════════════════════
   // FOOTER — coordinates
   // ════════════════════════════════════════════
+  const _yF = y;
   y += DIV_A;
   ctx.strokeStyle = TEAL + '14'; ctx.lineWidth = 0.5;
   ctx.beginPath(); ctx.moveTo(PX + 4, y + 0.5); ctx.lineTo(PX + PW - 4, y + 0.5); ctx.stroke();
   y += 1 + DIV_B;
   ctx.font = F_XSM; ctx.fillStyle = DIM + 'cc'; ctx.textAlign = 'left';
   ctx.fillText(Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY), L, y + TXT);
+  y += R_H;
+  hbox(_yF);
 
   // ─ Map name flash ─
   if (bgFlash && bgFlash.timer > 0) {
