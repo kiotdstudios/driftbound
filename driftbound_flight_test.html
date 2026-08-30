@@ -299,8 +299,8 @@ const ORE_COLLECT_R  = 50;     // auto-collect radius
 const ASTEROID_TYPES = [
   // id           hp  oreMin  oreMax  sprite-px       loot              scale  → rendered px
   { id: 'sm_brown',  hp: 3, oreMin: 1, oreMax: 2, w: 38, h: 32, lootType: 'mineral',     lootChance: 0.02, scale: 2 }, // 76×64   — smaller than ship
-  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02, scale: 4 }, // 160×156 — materially larger than ship (136px)
-  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35, scale: 4 }, // 168×156 — approx 168px per spec
+  { id: 'lg_brown',  hp: 5, oreMin: 2, oreMax: 3, w: 40, h: 39, lootType: 'mineral',     lootChance: 0.02, scale: 2 }, // native scale (reverted from 4)
+  { id: 'lg_planet', hp: 6, oreMin: 3, oreMax: 5, w: 42, h: 39, lootType: 'armalcolite', lootChance: 0.35, scale: 2 }, // native scale (reverted from 4)
 ];
 
 // Spawn weights: lg_planet = 30%, sm_brown = 42%, lg_brown = 28%
@@ -767,10 +767,26 @@ let camLeadX = 0, camLeadY = 0;
 let camShakeX = 0, camShakeY = 0;
 let _prevBoosting = false;  // edge-detect for boost-start flare
 
+// CAMERA ZOOM: world-only zoom. HUD/minimap/map/diag/notifications NEVER scaled.
+// Scales around screen center (not ship) so smooth camera lead is preserved.
+const ZOOM_LEVELS  = [0.70, 0.85, 1.00, 1.15, 1.30];
+let   camZoomIdx    = 1;               // default = 0.85x
+let   camZoom       = ZOOM_LEVELS[1];  // current eased value
+let   camZoomTarget = ZOOM_LEVELS[1];  // target level
+const ZOOM_LERP     = 0.14;            // easing speed toward target
+
 function addCamShake(amt) {
   camShakeX += (Math.random() - 0.5) * amt * 2;
   camShakeY += (Math.random() - 0.5) * amt * 2;
 }
+
+// Mouse-wheel zoom (world only). Ignores wheel over menu text inputs.
+window.addEventListener('wheel', e => {
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.deltaY < 0)      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); // up = zoom in
+  else if (e.deltaY > 0) camZoomIdx = Math.max(0, camZoomIdx - 1);                       // down = zoom out
+}, { passive: true });
 
 // ─── AMBIENT DEBRIS ───────────────────────────────────────────────────────────
 // Small tumbling rock fragments drifting across the sector — no collision.
@@ -867,6 +883,17 @@ window.addEventListener('keydown', e => {
 
   if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
   if (e.code === 'F2') { e.preventDefault(); diagMode  = !diagMode; }
+
+  // Camera zoom: '-' out, '+'/'=' in, '0' reset to default (0.85x). World only.
+  if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+    if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+      camZoomIdx = Math.max(0, camZoomIdx - 1); e.preventDefault();
+    } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); e.preventDefault();
+    } else if (e.code === 'Digit0' || e.code === 'Numpad0') {
+      camZoomIdx = 1; e.preventDefault();
+    }
+  }
 
   // Record for debugger
 
@@ -1487,6 +1514,10 @@ function drawAsteroids(cx, cy) {
 
     const sy  = Math.round(cy + (ast.worldY - camY));
 
+    // Rock shake jitter — asteroid jostles briefly when hit (flashTimer > 0)
+    const jx = ast.flashTimer > 0 ? (Math.random()-0.5)*ast.flashTimer*0.5 : 0;
+    const jy = ast.flashTimer > 0 ? (Math.random()-0.5)*ast.flashTimer*0.5 : 0;
+
 
 
     // Frustum cull
@@ -1535,7 +1566,7 @@ function drawAsteroids(cx, cy) {
 
       ctx.save();
 
-      ctx.translate(sx, sy);
+      ctx.translate(sx + jx, sy + jy);
 
       ctx.rotate(rot);
 
@@ -3532,6 +3563,10 @@ function loop(now) {
   camLeadY += (ship.vy * CAM_LEAD - camLeadY) * CAM_LAG;
   camShakeX *= 0.74; camShakeY *= 0.74;
 
+  // Zoom easing toward the selected level (world only)
+  camZoomTarget = ZOOM_LEVELS[camZoomIdx];
+  camZoom += (camZoomTarget - camZoom) * ZOOM_LERP;
+
   // Boost-start: camera jolt + orange flare particle burst
   const _curBoosting = _boosting && ship.fuel > 0;
   if (_curBoosting && !_prevBoosting) {
@@ -3581,6 +3616,13 @@ function loop(now) {
 
   drawBG(ship.worldX, ship.worldY);
   drawStars(ship.worldX, ship.worldY);
+
+  // ── WORLD ZOOM TRANSFORM (world only; scales around screen center) ──
+  ctx.save();
+  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
+    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  ctx.imageSmoothingEnabled = false;  // keep pixel sprites crisp under zoom
+
   tickDebris();
   drawDebris(cx, cy);
 
@@ -3604,7 +3646,9 @@ function loop(now) {
 
   drawParticles();
 
-  // Hit flash
+  ctx.restore();  // ── END WORLD ZOOM (block A) ──
+
+  // Hit flash (full-screen UI overlay — NOT zoomed)
 
   if (ship.hitFlash > 0) {
 
@@ -3618,7 +3662,14 @@ function loop(now) {
 
   }
 
+  // Ship drawn under the same world zoom so it scales with the world
+  ctx.save();
+  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
+    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  ctx.imageSmoothingEnabled = false;
   drawShip(cx, cy, now, speed);
+  ctx.restore();
+
   drawHUD(speed);
   drawMinimap();
 
