@@ -145,6 +145,33 @@ per-agent status logs are the historical/discovery record that feeds them.
 ## Directive Template (for Chief use)
 
 ```
+
+---
+
+## DIRECTIVE: CP3e — Multi-pod chain connector continuity
+- **ASSIGNED TO:** Aki / Core Gameplay
+- **BRANCH:** `agent/core-gameplay`
+- **BASELINE:** `agent/core-gameplay @ aca2261` (CP3d)
+- **STATUS:** GO
+- **QA EVIDENCE:** Chief screenshot supplied 2026-08-31 shows a north-side chain of two pods. The lower pod is separated from the ship by an excessive exposed line, while the upper pod appears to float with a large empty gap and no visible connector/strut. CP3d therefore does not yet produce a visually continuous multi-module assembly.
+- **OBJECTIVE:** Correct attached-module placement and connector rendering for every parent→child edge in a chained assembly, including core→pod and pod→pod. Each module must read as physically connected: sprite edges must not overlap, float apart, or lose the visible connector between them.
+- **REQUIREMENTS:**
+  - Diagnose the actual core→pod and pod→pod geometry independently; do not assume the same face extent or anchor works for both.
+  - Derive placement from each parent and child sprite's real directional visible bounds/anchor for the relevant connector faces.
+  - Render the connector/strut from the parent's visible face edge to the child's visible face edge for every graph edge. No strut may terminate inside a sprite, extend through the ship, disappear between chained pods, or leave an unexplained empty gap.
+  - Use one authoritative computed transform for attached rendering, strut endpoints, hover targeting, and the completed docking target so interaction geometry cannot drift from visuals.
+  - Preserve correct rotation for N/E/S/W connections and for the ship's heading. Verify at least a two-pod chain in all four directions.
+  - Preserve graph topology, saved `local_position`, connector state, docking state machine, resource costs, mass, and pod scale. This is a render/interaction-coordinate correction, not a graph or balance redesign.
+  - Do not treat a stale browser/server as the explanation unless the exact served commit is positively identified in the runtime. Capture the tested commit hash in the checkpoint.
+- **ALLOWED FILES / OWNERSHIP:** Attached-module render/transform helpers and their minimal call sites in `src/main.js`; additive render-coordinate exposure from `src/systems/docking.js` only if strictly necessary; dedicated CP3 connector/hover regression tests; `AKI_STATUS.md` and cross-agent notes as required.
+- **DO NOT TOUCH:** Pod scale tuning; HUD/map/minimap/background/VFX modules; movement, mining, save schema, resource balance; Orcha-owned files; integration worktree; `ORCHA_STATUS.md`.
+- **ACCEPTANCE TESTS:**
+  - Automated assertions for both core→pod and pod→pod edges that independently reject sprite overlap, unexplained empty gaps, missing struts, and struts drawn inside either sprite.
+  - Two-or-more attached pods tested at N/E/S/W connectors and under ship rotation/heading changes.
+  - Hover hit position must match each rendered attached pod after the placement correction.
+  - Docking completion must not visibly jump to a different target position.
+  - Existing CP2 docking, assembly, interaction, hover, map-input, smoke, and CP3 render regressions must pass sequentially. Report any known timing flake separately and rerun it in isolation before classifying it as environmental.
+- **STOP CONDITION:** Write the complete checkpoint to `AKI_STATUS.md`, including final commit hash and explicit pushed confirmation; commit and push **only** to `agent/core-gameplay`; then HOLD for Chief visual review. Do not self-integrate.
 ## DIRECTIVE: <ID>
 - ASSIGNED TO:
 - BRANCH:
