@@ -17,6 +17,7 @@ import {
   applyWorldTransform, restoreWorldTransform,
 } from './core/camera.js';
 import { initInteractions, resolveInteractions } from './systems/interactions.js';
+import { initDocking, isDocking, getDockingState, getDockingAnimData, startDocking, abortDocking, updateDocking, DOCK_STATE } from './systems/docking.js';
 
 
 
@@ -829,6 +830,44 @@ initInteractions({
   },
 });
 
+// ── CP2: Physical docking system ─────────────────────────────────────────────
+initDocking({
+  ship,
+  getShipAssembly:   () => shipAssembly,
+  getWorldPods:      () => worldPods,
+  getPOD_TYPES:      () => POD_TYPES,
+  makeModuleNode,
+  findBestConnector: (pod) => findBestConnector(pod),
+  consumeOre:        (amount) => { ship.ore -= amount; },
+  removeWorldPodByPid(pid) {
+    const i = worldPods.findIndex(p => p.pid === pid);
+    if (i >= 0) worldPods.splice(i, 1);
+  },
+  addAttachedPod:    (pod) => { attachedPods.push(pod); },
+  applyCargoBonus(podType) {
+    const t = POD_TYPES[podType] || {};
+    if (t.cargoBonus) ship.shipType.cargoLimit += t.cargoBonus;
+  },
+  saveGame,
+  showToast,
+  spawnLockParticles(count) {
+    // Restrained lock-confirm VFX: small sparks at screen center
+    for (let p = 0; p < count; p++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 1 + Math.random() * 3;
+      particles.push({
+        x: canvas.width / 2, y: canvas.height / 2,
+        vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+        life: 1.0, decay: 0.07 + Math.random() * 0.06,
+        size: 1.5 + Math.random() * 2.5,
+        color: Math.random() < 0.6 ? '#38bdf8' : '#ffffff',
+      });
+    }
+  },
+  addCameraShake,
+  POD_ATTACH_COST,
+});
+
 
 
 // ─── RESIZE ───────────────────────────────────────────────────────────────────
@@ -1422,7 +1461,10 @@ function drawAsteroids(cx, cy) {
 
 function drawWorldPods(cx, cy) {
   const t = Date.now() * 0.001;
+  // Skip the pod being docked — drawDockingPod() renders it in-flight instead.
+  const _dockPid = isDocking() ? getDockingState().pod_instance_id : null;
   for (const pod of worldPods) {
+    if (_dockPid && pod.pid === _dockPid) continue;
     const sx = cx + (pod.worldX - ship.worldX);
     const sy = cy + (pod.worldY - ship.worldY);
     if (sx < -140 || sx > canvas.width+140 || sy < -140 || sy > canvas.height+140) continue;
@@ -1514,6 +1556,137 @@ function drawWorldPods(cx, cy) {
   }
 }
 
+// ─── CP2 DOCKING ANIMATION RENDERER ─────────────────────────────────────────
+// Renders the pod traveling to the ship during ALIGNING / PULLING_IN / LOCKING.
+// During ALIGNING the pod holds position with a targeting ring.
+// During PULLING_IN it eases toward the reserved connector world position.
+// During LOCKING it flashes at the final position.
+function drawDockingPod(cx, cy) {
+  const anim = getDockingAnimData();
+  if (!anim) return;
+
+  const t      = Date.now() * 0.001;
+  const angle  = shipHeadingAngle();
+  const cos_a  = Math.cos(angle), sin_a = Math.sin(angle);
+
+  // Compute target connector world position (module local → rotated → world)
+  const lx     = anim.slotModLocalPos.x;
+  const ly     = anim.slotModLocalPos.y;
+  // Add one connector-gap step in the slot direction so pod ends at child center
+  const dv     = DIR_VEC[anim.slotConnDir] || { x: 0, y: 1 };
+  const clx    = lx + dv.x * CONNECTOR_GAP;
+  const cly    = ly + dv.y * CONNECTOR_GAP;
+  const tWorldX = ship.worldX + (clx * cos_a - cly * sin_a);
+  const tWorldY = ship.worldY + (clx * sin_a + cly * cos_a);
+
+  // Interpolated world position
+  let podWX, podWY;
+  if (anim.phase === DOCK_STATE.ALIGNING) {
+    // Hold at source with slight lock-on jitter
+    const jitter = (1 - anim.progress) * 3;
+    podWX = anim.srcX + (Math.random() - 0.5) * jitter;
+    podWY = anim.srcY + (Math.random() - 0.5) * jitter;
+  } else {
+    // PULLING_IN / LOCKING: smooth ease-in-out toward target
+    const raw  = anim.phase === DOCK_STATE.LOCKING ? 1.0 : anim.progress;
+    const ease = raw < 0.5 ? 2 * raw * raw : -1 + (4 - 2 * raw) * raw;
+    podWX = anim.srcX + (tWorldX - anim.srcX) * ease;
+    podWY = anim.srcY + (tWorldY - anim.srcY) * ease;
+  }
+
+  const sx = cx + (podWX - ship.worldX);
+  const sy = cy + (podWY - ship.worldY);
+
+  const podType = POD_TYPES[anim.type] || {};
+  const col     = podType.color || '#38bdf8';
+
+  // ── Targeting ring (ALIGNING only) ───────────────────────────────────────
+  if (anim.phase === DOCK_STATE.ALIGNING) {
+    const ring = 52 - 12 * anim.progress;  // ring collapses as alignment completes
+    ctx.save();
+    ctx.globalAlpha = 0.55 + 0.3 * Math.sin(t * 5);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth   = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.arc(sx, sy, ring, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // ── Pod sprite ────────────────────────────────────────────────────────────
+  const lockFlash = anim.phase === DOCK_STATE.LOCKING
+    ? 0.6 + 0.4 * Math.sin(anim.progress * Math.PI * 10)
+    : 1.0;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.globalAlpha = lockFlash;
+
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 36);
+  glow.addColorStop(0, col + '55'); glow.addColorStop(1, col + '00');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(0, 0, 36, 0, Math.PI * 2); ctx.fill();
+
+  const _podSprite = podRotations['south'];
+  if (_podSprite && _podSprite.naturalWidth) {
+    const S = POD_DISPLAY_SIZE;
+    ctx.imageSmoothingEnabled = false;
+    ctx.shadowColor = col; ctx.shadowBlur = 14;
+    ctx.drawImage(_podSprite, -S/2, -S/2, S, S);
+    ctx.shadowBlur = 0;
+  } else {
+    ctx.shadowColor = col; ctx.shadowBlur = 14;
+    ctx.fillStyle = '#0d1a2a'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    const R = 18;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 - Math.PI / 8;
+      k === 0 ? ctx.moveTo(Math.cos(a)*R, Math.sin(a)*R) : ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+
+  // ── Status label ─────────────────────────────────────────────────────────
+  const phaseLabel = anim.phase === DOCK_STATE.ALIGNING ? 'ALIGNING...'
+    : anim.phase === DOCK_STATE.PULLING_IN ? 'DOCKING...'
+    : 'LOCKING...';
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font      = 'bold 11px Courier New';
+  ctx.fillStyle = col;
+  ctx.shadowColor = col; ctx.shadowBlur = 8;
+  ctx.globalAlpha = 0.85;
+  ctx.fillText(phaseLabel, sx, sy - 66);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// Select the best free connector on the ship to receive an incoming pod.
+// Scores connectors by how closely they face the pod's approach direction.
+function findBestConnector(pod) {
+  const angle  = shipHeadingAngle();
+  const cos_a  = Math.cos(angle), sin_a = Math.sin(angle);
+  const dx     = pod.worldX - ship.worldX;
+  const dy     = pod.worldY - ship.worldY;
+  const dist   = Math.hypot(dx, dy);
+  let podDirX = 0, podDirY = 1;
+  if (dist > 0.001) { podDirX = dx / dist; podDirY = dy / dist; }
+  let bestScore = -Infinity, best = null;
+  const order = ['core', ...Object.keys(shipAssembly).filter(k => k !== 'core')];
+  for (const id of order) {
+    const mod = shipAssembly[id];
+    for (const c of mod.available_connectors) {
+      if (!c.free) continue;
+      const lv = DIR_VEC[c.dir];
+      const wx = lv.x * cos_a - lv.y * sin_a;
+      const wy = lv.x * sin_a + lv.y * cos_a;
+      const score = podDirX * wx + podDirY * wy;
+      if (score > bestScore) { bestScore = score; best = { mod, conn: c }; }
+    }
+  }
+  return best;
+}
+
 function tryClaimWorldPod() {
   for (let i = worldPods.length - 1; i >= 0; i--) {
     const pod  = worldPods[i];
@@ -1537,35 +1710,10 @@ function tryClaimWorldPod() {
         }
 
       } else {
-        // ── Attach module pod: connector + resource validation, then splice
-        //    it into the ship assembly graph as a physical module. ──
-        const podType = POD_TYPES[pod.type] || {};
-        const canDock = (podType.connectors && podType.connectors.length > 0);
-        const slot    = canDock ? findFreeConnector() : null;
-        if (!canDock || !slot) {
-          showToast('NO AVAILABLE DOCKING PORT', '#ef4444');   // pod stays unattached
-        } else if (ship.ore < POD_ATTACH_COST) {
-          showToast('NOT ENOUGH NEBULITE  (' + ship.ore + '/' + POD_ATTACH_COST + ')', '#ef4444');
-        } else {
-          ship.ore -= POD_ATTACH_COST;
-          // Build the module node and wire the connector relationship into the graph.
-          const node = makeModuleNode(pod.pid, pod.type, slot.mod, slot.conn);
-          shipAssembly[pod.pid]        = node;
-          slot.conn.free               = false;
-          slot.mod.connected_to[slot.conn.id] = pod.pid;
-          // Keep the legacy gameplay list in sync (cargo/HUD/interior read it).
-          attachedPods.push({ ...podType, pid: pod.pid, mod_id: pod.pid });
-          worldPods.splice(i, 1);
-          if (podType.cargoBonus) ship.shipType.cargoLimit += podType.cargoBonus;
-          showToast('POD DOCKED  ' + slot.mod.pod_instance_id.toUpperCase() + '\u00B7' + slot.conn.id +
-                    '  (+' + (podType.mass||0) + ' MASS)', '#38bdf8');
-          saveGame();
-          for (let p = 0; p < 30; p++) {
-            const ang = Math.random()*Math.PI*2, spd = 1+Math.random()*3;
-            particles.push({x:canvas.width/2,y:canvas.height/2,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-              life:40+Math.random()*30,maxLife:70,color:'#38bdf8',size:2+Math.random()*2});
-          }
-        }
+        // CP2: hand off to the physical docking state machine.
+        // Validation, resource reservation, and connector reservation happen
+        // inside startDocking(); graph mutation happens at LOCK commit.
+        startDocking(pod);
       }
       return true; // one pod per keypress
     }
@@ -2246,7 +2394,9 @@ function drawDevControls() {
       ctx.fillStyle = '#e6c56a';
       ctx.fillText(row.k, kx, ly);
       ctx.fillStyle = '#c3d4e0';
-      ctx.fillText(row.d, dx, ly);
+      // X key shows context-sensitive description during docking
+      const _rowDesc = (row.k === 'X' && isDocking()) ? 'Cancel Docking' : row.d;
+      ctx.fillText(_rowDesc, dx, ly);
       ly += LH;
     }
   }
@@ -3055,7 +3205,10 @@ function drawDebug(speed) {
 
 function update() {
 
-  const braking  = keys['KeyX'];   // brake (was Space; Space reserved for future gameplay)
+  // X = brake normally; X during docking = cancel dock (not brake).
+  const _dockActive = isDocking();
+  if (_dockActive && keys['KeyX']) abortDocking('x_cancel');
+  const braking  = !_dockActive && keys['KeyX'];
 
   // Smooth boost ramp: 0=cruise, 1=full boost
 
@@ -3242,6 +3395,8 @@ function update() {
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 
+let _prevLoopNow = 0;  // used to compute per-frame dt for docking state machine
+
 function loop(now) {
 
   // Identity transform every frame: no leaked/partial world transform from a prior
@@ -3276,7 +3431,13 @@ function loop(now) {
     return;
   }
 
+  // Compute elapsed ms since last frame (clamped to avoid spiral-of-death on tab resume)
+  const dt = _prevLoopNow > 0 ? Math.min(100, now - _prevLoopNow) : 16.67;
+  _prevLoopNow = now;
+
   const speed = update();
+
+  updateDocking(dt);
 
   updateMining();
 
@@ -3341,6 +3502,7 @@ function loop(now) {
   drawAsteroids(cx, cy);
 
   drawWorldPods(cx, cy);
+  drawDockingPod(cx, cy);   // CP2: animate pod in-flight during docking sequence
   drawAttachedPods(cx, cy);
   drawMiningLaser(cx, cy);
 
@@ -4181,4 +4343,13 @@ window.__DB = {
   set mapOpen(v){ v ? regionalMap.open() : regionalMap.close(); },
   get dbgAX(){ return _dbgAX; },
   get dbgAY(){ return _dbgAY; },
+  // ── CP2 docking test bridge ──
+  get isDocking(){ return isDocking(); },
+  get dockingState(){ return getDockingState(); },
+  startDockingByPid(pid) {
+    const pod = worldPods.find(p => p.pid === pid);
+    return pod ? startDocking(pod) : false;
+  },
+  abortDocking(reason){ abortDocking(reason); },
+  get DOCK_STATE(){ return DOCK_STATE; },
 };

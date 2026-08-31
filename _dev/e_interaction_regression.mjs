@@ -13,6 +13,8 @@ await p.goto(URL,{waitUntil:'domcontentloaded'}); await p.waitForTimeout(1500);
 await p.click('text=PLAY SOLO'); await p.waitForTimeout(800);
 
 let PASS=0, FAIL=0;
+// CP2: wait for docking sequence to complete (replaces old instant-attach behavior)
+async function waitForDock(timeout=3000){const t0=Date.now();while(Date.now()-t0<timeout){const d=await p.evaluate(()=>window.__DB.isDocking);if(!d)return;await p.waitForTimeout(50);}throw new Error('waitForDock timed out');}
 const chk=(name,cond,detail='')=>{ if(cond){PASS++;console.log(`  PASS  ${name}`);} else {FAIL++;console.log(`  FAIL  ${name}  ${detail}`);} };
 const fc=()=>p.evaluate(()=>window.__DB.frameCount);
 // getContext('2d') on an already-2d canvas returns the same live context instance the
@@ -57,7 +59,7 @@ chk('0 console errors', con.length===0, con.join(' | '));
 // ---- 4. world pod in range -> claim (edge) ----
 console.log('\n[4] E near world pod -> attaches'); con.length=0; await reset();
 await p.evaluate(()=>{ const DB=window.__DB; DB.ship.ore=999; DB.worldPods.push({type:'modular_space_pod',pid:'wp1',worldX:DB.ship.worldX+10,worldY:DB.ship.worldY}); window.__wp=DB.worldPods.length; window.__ap=DB.attachedPods.length; });
-await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await p.waitForTimeout(300);
+await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await waitForDock();
 s=await p.evaluate(()=>({wp:window.__DB.worldPods.length,ap:window.__DB.attachedPods.length,wp0:window.__wp,ap0:window.__ap}));
 chk('world pod consumed', s.wp<s.wp0, JSON.stringify(s));
 chk('attached pod added', s.ap>s.ap0, JSON.stringify(s));
@@ -68,7 +70,7 @@ console.log('\n[5] E with pod AND asteroid in range -> pod only (one action)'); 
 await p.evaluate(()=>{ const DB=window.__DB; DB.ship.ore=999;
   DB.worldPods.push({type:'modular_space_pod',pid:'wp2',worldX:DB.ship.worldX+10,worldY:DB.ship.worldY});
   const a=DB.asteroids.find(x=>x.hp>0); a.worldX=DB.ship.worldX+20; a.worldY=DB.ship.worldY; window.__hp0=a.hp; window.__aid=a.aid; window.__wp=DB.worldPods.length; });
-await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await p.waitForTimeout(120);
+await p.waitForTimeout(150); await p.keyboard.press('KeyE'); await waitForDock();
 s=await p.evaluate(()=>{ const DB=window.__DB; const a=DB.asteroids.find(x=>x.aid===window.__aid); return {wp:DB.worldPods.length,wp0:window.__wp,hp:a?a.hp:0,hp0:window.__hp0}; });
 chk('pod claimed', s.wp<s.wp0, JSON.stringify(s));
 chk('asteroid NOT mined on same press', s.hp===s.hp0, JSON.stringify(s));

@@ -30,6 +30,20 @@ your implementation checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: A2 / CP2
+- STATUS: COMPLETE
+- BRANCH: agent/core-gameplay
+- COMMIT: 76a0f84
+- FILES CHANGED: src/systems/docking.js (NEW), src/main.js (11 targeted edits), _dev/cp2_docking_verify.mjs (NEW), _dev/e_interaction_regression.mjs (waitForDock compat), _dev/phase1_pod_assembly_verify.mjs (waitForDock compat)
+- IMPLEMENTATION SUMMARY: Physical docking state machine extracted into src/systems/docking.js. Replaces the instant-attach in tryClaimWorldPod with a staged IDLE→ALIGNING (500ms)→PULLING_IN (900ms)→LOCKING (350ms)→IDLE sequence (~1.75s total). Connector selection by approach direction via findBestConnector() (dot product of ship-local connector world vectors vs pod approach vector). Resources (ore) and connector reserved at ALIGNING start; graph mutation (shipAssembly update) happens only at LOCK commit — per DECISIONS.md rule #6. X key during docking cancels (refunds ore, frees connector), not brakes. drawDockingPod() renders animated pod in-flight between drawWorldPods and drawAttachedPods. Save safety by construction: pod stays in worldPods until LOCK commit, so saveGame() during ALIGNING/PULLING_IN serializes it as uncollected. Dev panel X key description is context-sensitive (shows "Cancel Docking" during active docking). Full __DB bridge added.
+- TEST RESULTS: cp2_docking_verify.mjs 22/22 PASS | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: None
+- KNOWN WARNINGS: None
+- PUSHED TO GITHUB: YES — agent/core-gameplay
+- QUESTIONS FOR CHIEF: None. CP2 complete. Holding for next directive per protocol.
+
 ## Retroactive entry (logged by Orcha/Chief for continuity — predates this system)
 
 ### DIRECTIVE ID: A1a
