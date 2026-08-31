@@ -14,6 +14,7 @@ import {
   worldToScreen, screenToWorld,
   applyWorldTransform, restoreWorldTransform,
 } from './core/camera.js';
+import { initInteractions, resolveInteractions } from './systems/interactions.js';
 
 
 
@@ -764,6 +765,56 @@ onClear(() => {
 
 initMouseTracking(canvas);
 initCamera(canvas);
+initInteractions({
+  ship,
+  getMineTarget:      () => mineTarget,
+  getAttachedPods:    () => attachedPods,
+  getInteriorMode:    () => interiorMode,
+  getInteriorFadeDir: () => interiorFadeDir,
+  onEnterInterior(podIdx) {
+    interiorPodIdx  = podIdx;
+    interiorFadeDir = 1;
+    interiorFade    = 0;
+    iPlayerX = 4.5; iPlayerY = 6.5;
+  },
+  onClaimWorldPod: tryClaimWorldPod,
+  onMineExecute(ast) {
+    // Uses canvas.width/2 (not getScreenCenter) to match original updateMining()
+    // behavior where cx/cy were raw canvas-center, not camera-lead-adjusted.
+    const cx     = canvas.width  / 2;
+    const cy     = canvas.height / 2;
+    const camX   = ship.worldX;
+    const camY   = ship.worldY;
+    const isDark = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
+    const asx    = cx + (ast.worldX - camX);
+    const asy    = cy + (ast.worldY - camY);
+    ast.hp        -= MINE_DAMAGE;
+    if (multiMode && socket) socket.send(JSON.stringify({ type: 'mine', aid: ast.aid, damage: MINE_DAMAGE }));
+    ast.flashTimer    = 8;
+    ship.mineCooldown = MINE_INTERVAL;
+    ship.laserWx      = ast.worldX;
+    ship.laserWy      = ast.worldY;
+    ship.laserTimer   = 10;
+    spawnMineChips(asx, asy, isDark);
+    if (ast.hp <= 0) {
+      const oreAmt = ast.type.oreMin +
+        Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
+      orePickups.push({
+        worldX: ast.worldX, worldY: ast.worldY,
+        amount: oreAmt, life: 480,
+        lootType:   ast.type.lootType  || null,
+        lootChance: ast.type.lootChance || 0,
+      });
+      spawnBreakBurst(asx, asy, isDark);
+      if (multiMode && socket) {
+        // Server owns asteroid state — just notify, don't mutate locally
+      } else {
+        asteroids.splice(asteroids.indexOf(ast), 1);
+        toRespawn.push({ timer: 900 });   // respawn ~15s later
+      }
+    }
+  },
+});
 
 
 
@@ -1066,63 +1117,9 @@ function updateMining() {
   }
 
 
-
-  // ── SINGLE [E] INTERACTION RESOLVER ──────────────────────────
-  // Exactly ONE E action per frame. Priority order:
-  //   POD INTERIOR ENTER (edge) > WORLD POD CLAIM (edge) > MINE (hold-to-mine)
-  let _eHandled = false;
-
-  // (1) Enter an attached pod's interior. Edge-triggered; pods with an interior only.
-  if (isEEdge() && !interiorMode && interiorFadeDir === 0) {
-    for (let _pi = 0; _pi < attachedPods.length; _pi++) {
-      if (attachedPods[_pi].hasInterior) {
-        interiorPodIdx  = _pi;
-        interiorFadeDir = 1;
-        interiorFade    = 0;
-        iPlayerX = 4.5; iPlayerY = 6.5;
-        _eHandled = true;
-        break;
-      }
-    }
-  }
-
-  // (2) Claim / attach a world pod. Edge-triggered.
-  if (!_eHandled && isEEdge()) {
-    _eHandled = tryClaimWorldPod();
-  }
-
-  // (3) Mine the nearest asteroid. Hold-to-mine, only when E claimed nothing else.
-  if (!_eHandled && keys['KeyE'] && mineTarget && ship.mineCooldown <= 0) {
-    const ast      = mineTarget;
-    const isDark   = ast.type.id === 'dark_metal' || ast.type.id === 'void_dark';
-    const asx      = cx + (ast.worldX - camX);
-    const asy      = cy + (ast.worldY - camY);
-    ast.hp        -= MINE_DAMAGE;
-    if (multiMode && socket) socket.send(JSON.stringify({ type:'mine', aid: ast.aid, damage: MINE_DAMAGE }));
-    ast.flashTimer = 8;
-    ship.mineCooldown = MINE_INTERVAL;
-    ship.laserWx   = ast.worldX;
-    ship.laserWy   = ast.worldY;
-    ship.laserTimer = 10;
-    spawnMineChips(asx, asy, isDark);
-    if (ast.hp <= 0) {
-      const oreAmt = ast.type.oreMin +
-        Math.floor(Math.random() * (ast.type.oreMax - ast.type.oreMin + 1));
-      orePickups.push({
-        worldX: ast.worldX, worldY: ast.worldY,
-        amount: oreAmt, life: 480,
-        lootType: ast.type.lootType || null,
-        lootChance: ast.type.lootChance || 0,
-      });
-      spawnBreakBurst(asx, asy, isDark);
-      if (multiMode && socket) {
-        // Server owns asteroid state — just notify, don't mutate locally
-      } else {
-        asteroids.splice(asteroids.indexOf(ast), 1);
-        toRespawn.push({ timer: 900 });   // respawn ~15s later
-      }
-    }
-  }
+  // ── Interaction resolver runs here — after scan, before cooldown tick ──
+  // Preserves original ordering: resolve (fire + set cooldown) → decrement.
+  resolveInteractions();
 
   if (ship.mineCooldown > 0) ship.mineCooldown--;
 
