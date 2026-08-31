@@ -256,7 +256,7 @@ function _contentBBox(img) {
     }
   }
   if (maxX < 0) return null;
-  return { width: maxX - minX + 1, height: maxY - minY + 1 };
+  return { width: maxX - minX + 1, height: maxY - minY + 1, minX, minY, maxX, maxY };
 }
 
 // Returns the canvas draw size (S, px) for attached-pod sprites.
@@ -289,7 +289,8 @@ function _contentBBox(img) {
 // loaded yet, or if the ship/pod geometry doesn't fit the assumption above.
 function getAttachedPodRenderSize() {
   if (_attachedPodRenderSize != null) return _attachedPodRenderSize;
-  const shipHalfWidthWorld = _shipHalfWidthWorld();
+  const _hullExt = _shipHullExtentWorld();
+  const shipHalfWidthWorld = _hullExt ? (_hullExt.north + _hullExt.south + _hullExt.east + _hullExt.west) / 4 : null;
   const podImg = podRotations['south'];
   if (shipHalfWidthWorld == null || !podImg || !podImg.naturalWidth) return POD_DISPLAY_SIZE;
 
@@ -314,38 +315,70 @@ function getAttachedPodRenderSize() {
 // scale formula/output is reused, unchanged, by the connector-placement fix
 // below (CP3c) -- this function changes NO pod scale, it only exposes a
 // value that already existed inline.
-let _shipHalfWidthWorldCache = null;
-function _shipHalfWidthWorld() {
-  if (_shipHalfWidthWorldCache != null) return _shipHalfWidthWorldCache;
-  const shipImg = rotations['south'];
+// -- CP3d: real per-axis hull extents (not one symmetric scalar) ------------
+// CP3c fixed overlap using a single "half width" scalar (from the SOUTH
+// sprite's content width) applied to every connector face alike. That is
+// only an approximation: the ship's 8 directional sprites are independently
+// rendered art, not pixel-rotations of one image, so the hull's true extent
+// toward the front/back can differ from its extent toward the sides.
+//
+// Fix: measure the ship's REAL per-axis reach (north/south/east/west, each
+// independently) from the one sprite where ship-local axes line up 1:1 with
+// image axes with zero rotation applied -- that's rotations['north'], since
+// HEADING_ANGLE.north === 0 (see shipHeadingAngle()/rotLocal() above: every
+// other heading is this same sprite's local-frame offsets, rotated). Extents
+// are measured from the sprite's own nominal center (imgW/2, imgH/2) -- the
+// exact point ctx.drawImage() aligns to the ship's world position in
+// drawShip() -- not from the content bbox's own (possibly off-center) middle,
+// so a connector's flush distance also correctly reflects any east/west vs.
+// north/south content-centering skew already present in the source art.
+// Stored on `ship` itself (ship.hullHalfExtent) per directive -- not just a
+// private module cache -- so it's inspectable/reusable as ship state.
+let _shipHullExtentCache = null;
+function _shipHullExtentWorld() {
+  if (_shipHullExtentCache) return _shipHullExtentCache;
+  const shipImg = rotations['north'];
   if (!shipImg || !shipImg.naturalWidth) return null;
-  const shipBBox = _contentBBox(shipImg);
-  if (!shipBBox) return null;
-  _shipHalfWidthWorldCache = (shipBBox.width / 2) * DISPLAY_SCALE;
-  return _shipHalfWidthWorldCache;
+  const bbox = _contentBBox(shipImg);
+  if (!bbox) return null;
+  const imgCX = shipImg.naturalWidth / 2, imgCY = shipImg.naturalHeight / 2;
+  _shipHullExtentCache = {
+    north: (imgCY - bbox.minY) * DISPLAY_SCALE,
+    south: (bbox.maxY - imgCY) * DISPLAY_SCALE,
+    east:  (bbox.maxX - imgCX) * DISPLAY_SCALE,
+    west:  (imgCX - bbox.minX) * DISPLAY_SCALE,
+  };
+  ship.hullHalfExtent = _shipHullExtentCache; // store on the player, per directive
+  return _shipHullExtentCache;
 }
 
-// -- CP3c: connector-placement fix -------------------------------------------
-// CP3b-2 fixed pod SCALE but (per chief QA) left pods overlapping the hull:
-// the connector point itself (CONNECTOR_GAP, CP2 graph data) sits INSIDE the
-// ship's own silhouette by construction (46 < ~51 world-px ship half-width),
-// so anything drawn at the raw graph local_position necessarily overlaps.
+// -- CP3c/d: connector-placement fix -----------------------------------------
+// The connector point itself (CONNECTOR_GAP, CP2 graph data) sits INSIDE the
+// ship's own silhouette by construction, so anything drawn at the raw graph
+// local_position necessarily overlaps. Fix is render-time ONLY:
+// getNodeRenderOffset() walks the same shipAssembly parent chain the graph
+// already encodes, borrows the graph's CONNECTOR DIRECTION (never its
+// distance), and substitutes a flush distance of (parent's face extent
+// toward the child) + (child's face extent toward the parent) at every hop.
+// shipAssembly, local_position and CONNECTOR_GAP itself are never written to
+// -- the CP2 structural/save layer is untouched. Pod scale
+// (getAttachedPodRenderSize) is also untouched.
 //
-// Fix is render-time ONLY: getNodeRenderOffset() walks the same shipAssembly
-// parent chain the graph already encodes, borrows the graph's CONNECTOR
-// DIRECTION (never its distance), and substitutes a flush distance of
-// (parentHalfWidth + thisHalfWidth) at every hop. shipAssembly, local_position
-// and CONNECTOR_GAP itself are never written to -- the CP2 structural/save
-// layer is untouched, exactly as directed ("fix connector placement math
-// only"). Pod scale (getAttachedPodRenderSize) is also untouched.
-function getModuleRenderHalfWidth(modId) {
+// dirKey is one of 'north'|'south'|'east'|'west' -- the direction FROM modId
+// TOWARD the neighbor whose distance we're computing (i.e. which face of
+// modId is presenting). The ship core now answers with its real per-axis
+// extent (CP3d); pods stay a symmetric scalar since pod art has no
+// directional variants yet (single sprite, reused at every facing) -- ready
+// to swap in a per-direction lookup here too if that ever changes.
+function getModuleFaceExtent(modId, dirKey) {
   if (!modId || modId === 'core') {
-    const w = _shipHalfWidthWorld();
-    return w != null ? w : POD_DISPLAY_SIZE / 2;
+    const ext = _shipHullExtentWorld();
+    if (ext && dirKey in ext) return ext[dirKey];
+    return POD_DISPLAY_SIZE / 2;
   }
   // NOTE: only one pod render size exists today (getAttachedPodRenderSize()
-  // is global, not per-type). If per-type pod sizes are ever added, this
-  // must look up modId's own type size instead of reusing the global one.
+  // is global, not per-type/per-direction). If per-type or directional pod
+  // sizes are ever added, this must look up modId's own size instead.
   return getAttachedPodRenderSize() / 2;
 }
 
@@ -360,7 +393,11 @@ function getNodeRenderOffset(nodeId) {
   const dy = node.local_position.y - parent.local_position.y;
   const dist = Math.hypot(dx, dy) || 1;
   const dirX = dx / dist, dirY = dy / dist;
-  const flushDist = getModuleRenderHalfWidth(parentId) + getModuleRenderHalfWidth(nodeId);
+  // Connectors are only ever axis-aligned (N/E/S/W, see DIR_VEC) -- pick the
+  // exact face on each side of the joint, not an averaged/symmetric guess.
+  const towardChildKey  = dirY < 0 ? 'north' : dirY > 0 ? 'south' : (dirX > 0 ? 'east' : 'west');
+  const towardParentKey = OPPOSITE_DIR[towardChildKey];
+  const flushDist = getModuleFaceExtent(parentId, towardChildKey) + getModuleFaceExtent(nodeId, towardParentKey);
   return { x: parentOffset.x + dirX * flushDist, y: parentOffset.y + dirY * flushDist };
 }
 
@@ -1788,7 +1825,7 @@ function drawDockingPod(cx, cy) {
   // render at once attached (getNodeRenderOffset()), not the raw
   // CONNECTOR_GAP graph step -- otherwise the pod would animate INTO the
   // hull, then visually "pop" outward the instant LOCK commits.
-  const flushDist = getModuleRenderHalfWidth(anim.slotModId) + getAttachedPodRenderSize() / 2;
+  const flushDist = getModuleFaceExtent(anim.slotModId, anim.slotConnDir) + getAttachedPodRenderSize() / 2;
   const clx    = lx + dv.x * flushDist;
   const cly    = ly + dv.y * flushDist;
   const tWorldX = ship.worldX + (clx * cos_a - cly * sin_a);
@@ -4587,7 +4624,7 @@ window.__DB = {
   getInteractionCandidates(){ return getInteractionCandidates(); },
   get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
   // -- CP3c connector-placement test bridge --
-  get shipHalfWidthWorld(){ return _shipHalfWidthWorld(); },
+  get shipHullHalfExtent(){ return _shipHullExtentWorld(); },
   getNodeRenderOffset(nodeId){ return getNodeRenderOffset(nodeId); },
-  getModuleRenderHalfWidth(modId){ return getModuleRenderHalfWidth(modId); },
+  getModuleFaceExtent(modId, dirKey){ return getModuleFaceExtent(modId, dirKey); },
 };

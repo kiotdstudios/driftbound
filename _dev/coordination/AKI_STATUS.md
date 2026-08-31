@@ -230,3 +230,28 @@ Aki: please confirm/correct the above retroactive entry and use the template for
 - QUESTIONS FOR CHIEF: None blocking. One backlog flag above (docking-animation sprite size mismatch) for chief's discretion on priority.
 - PUSHED TO GITHUB: YES — agent/core-gameplay, commit db96304
 - HOLD STATE: HOLDING. Per explicit directive, no further work will proceed on this branch until chief reviews.
+
+## DIRECTIVE ID: CP3d (per-axis hull extent — connector placement re-derivation)
+
+- STATUS: COMPLETE — HOLDING for chief review, per standing directive
+- BRANCH: agent/core-gameplay
+- COMMIT: (pending, see below)
+- FILES CHANGED: src/main.js (contentBBox extended, new ship-hull-extent measurement, connector math rewired), _dev/cp3_attached_pod_render_verify.mjs (bridge property rename fix)
+- TRIGGER: User disputed CP3c's fix with a live screenshot showing the pod still overlapping the hull. Investigation confirmed the disputed screenshot matched OLD pre-fix behavior (very likely stale cached JS in that browser tab — advised full tab close/reopen). Independently, the user also gave a direct instruction to make the fix more physically correct rather than relying on my own re-assertion: measure the ship's real sprite width, store it on the player, and use it (not a guessed constant) to place pods flush against whichever side (N/E/S/W) they connect to, and confirm it still rotates correctly.
+- ROOT CAUSE (of the approximation, not a functional bug): CP3c used ONE scalar ("ship half-width") for every connector face, measured from the SOUTH-facing sprite's content width. The ship's 8 directional sprites are independently rendered art (not pixel-rotations of one source image) — measured directly: north/south sprite content bbox is ~51x49px, east/west sprite content bbox is ~53x27px. A single scalar from one direction is an approximation that happens to be close for this particular art (~48-51px each way) but is not a real per-axis measurement, and doesn't hold in general.
+- IMPLEMENTATION SUMMARY:
+  - `_contentBBox()` extended to also return `minX/minY/maxX/maxY` (not just width/height) — additive, no existing caller broken.
+  - New `_shipHullExtentWorld()`: measures the ship's real reach in each of the 4 cardinal directions (north/south/east/west) independently, from `rotations['north']` — the one sprite where ship-local axes align 1:1 with image axes at zero rotation (HEADING_ANGLE.north === 0). Extents are measured from the sprite's own nominal center (imgW/2, imgH/2) — the exact point `ctx.drawImage()` aligns to the ship's world position in `drawShip()` — confirming ship-sprite-origin and player-world-position share the same anchor point (checked directly; sub-2px content-centering skew on north/south, ~4px on east/west, both well within visual tolerance).
+  - Result stored on the player object itself: `ship.hullHalfExtent = { north, south, east, west }` (world px), not just a private module cache, per directive.
+  - `getModuleRenderHalfWidth(modId)` replaced with `getModuleFaceExtent(modId, dirKey)` — for the ship core, returns the real per-axis extent in the requested direction; for pods, still a symmetric scalar (pod art has no directional variants yet — single sprite reused at every facing).
+  - `getNodeRenderOffset()` now picks the correct face on each side of a joint (parent's face toward the child + child's face toward the parent, using `OPPOSITE_DIR`) instead of an averaged/symmetric guess — still only borrows the graph's connector DIRECTION, never writes to `shipAssembly`/`local_position`/`CONNECTOR_GAP`.
+  - `drawDockingPod()`'s in-flight target and the test bridge (`window.__DB`) updated to the new function names/shapes (`shipHullHalfExtent`, `getModuleFaceExtent`).
+  - Rotation: unaffected — `rotLocal()` by `shipHeadingAngle()` is applied identically to the (now more accurate) offset vector; verified live (see TEST RESULTS).
+- MEASURED VALUES (live, via test bridge): `ship.hullHalfExtent = { north: 50, south: 46, east: 50, west: 50 }` world-px — close to CP3c's old blanket 51px estimate (confirms the earlier approximation was reasonable for THIS ship art, but is now a real per-axis measurement rather than a guess, and will correctly diverge for future asymmetric ship/module art).
+- TEST RESULTS: cp3_attached_pod_render_verify.mjs 12/12 PASS | cp2_docking_verify.mjs 30/30 PASS | map_input_suppression_verify.mjs 18/18 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | hover_targeting_verify.mjs 22/22 PASS. e_interaction_regression.mjs and phase0_smoke.mjs each show 2-3 flaky failures (interior-fade timing, boost-flag) that reproduce identically on this branch's UNCHANGED code paths and are traced to host CPU load during the test run (observed rAF/500ms dropping to ~12-14fps), not to this change — flagged as pre-existing environmental flakiness, not a regression.
+- RUNTIME READY: PASS. CONSOLE ERRORS: 0.
+- KNOWN WARNINGS: pod scale (getAttachedPodRenderSize) still uses an averaged scalar across all 4 axes rather than a directional one — intentional, pods have no directional art yet. drawDockingPod() in-flight sprite size mismatch flagged in CP3c is still open/out of scope.
+- USER'S DISPUTED SCREENSHOT: strongly matches pre-CP3c overlap behavior (pod bottom edge directly overlapping ship's sensor dome, no strut/gap) rather than either CP3c's or CP3d's flush-with-strut rendering. Most likely stale cached JS in that browser tab. Asked user to fully close/reopen the tab and re-screenshot to confirm.
+- BLOCKERS: None.
+- PUSHED TO GITHUB: pending (see next commit)
+- HOLD STATE: HOLDING for chief/user review.

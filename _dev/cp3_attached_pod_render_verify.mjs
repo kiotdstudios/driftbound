@@ -153,7 +153,7 @@ async function main() {
 
   console.log('\n[CP3c] Attached-pod render — expected flush geometry (from live measured half-widths)');
 
-  const shipHalfWidth = await page.evaluate(() => window.__DB.shipHalfWidthWorld);
+  const shipHalfWidth = await page.evaluate(() => window.__DB.getModuleFaceExtent('core', 'east')); // CP3d: connector is E, use real east-axis extent
   const S             = await page.evaluate(() => window.__DB.attachedPodRenderSize);
   const podHalfWidth  = S / 2;
   const renderOffset  = await page.evaluate((pid) => window.__DB.getNodeRenderOffset(pid), pid);
