@@ -30,6 +30,29 @@ your implementation checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: A2 / CP2 — REWORK PASS 2 (ore reservation model)
+- STATUS: COMPLETE (rework 2)
+- BRANCH: agent/core-gameplay
+- COMMIT: 28fe949
+- FILES CHANGED: src/systems/docking.js (6 targeted edits), _dev/cp2_docking_verify.mjs (+4 tests)
+- REWORK SUMMARY: Ore reservation model — available/reserved/consumed semantics implemented per directive requirement.
+  Problem: _s had no reservedOre field. abortDocking() refunded the bare POD_ATTACH_COST constant rather than the actual reserved amount. No reservation ledger was exposed in getDockingState().
+  Fix (6 edits to docking.js only):
+  1. Added _s.reservedOre: 0 to state — tracks ore moved from available to reserved at ALIGNING start.
+  2. getDockingState() now exposes reservedOre in its snapshot.
+  3. startDocking(): after ship.ore -= POD_ATTACH_COST, sets _s.reservedOre = POD_ATTACH_COST. Comment documents the available→reserved transition.
+  4. abortDocking(): refunds ship.ore += _s.reservedOre (exact reserved amount) and clears _s.reservedOre = 0. Not the constant — the ledger.
+  5. _commitDock(): clears _s.reservedOre = 0 before _reset(). Ore was already removed from ship.ore at reservation; clearing the ledger marks it consumed.
+  6. _reset(): includes _s.reservedOre = 0.
+  Model: ship.ore = available ore (decremented at ALIGNING). _s.reservedOre = amount earmarked for this dock. On abort: available += reserved, reserved = 0. On commit: reserved = 0 (consumed — available already reduced at start).
+- TEST RESULTS: cp2_docking_verify.mjs 26/26 PASS (+4 new: reservedOre==cost during ALIGNING, available+reserved==pre-dock total, reservedOre==0 after commit, reservedOre==0 after abort) | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: None
+- KNOWN WARNINGS: None
+- PUSHED TO GITHUB: YES — agent/core-gameplay @ 28fe949
+- QUESTIONS FOR CHIEF: None. Holding for chief's verdict.
+
 ### DIRECTIVE ID: A2 / CP2 — REWORK PASS
 - STATUS: COMPLETE (rework)
 - BRANCH: agent/core-gameplay
