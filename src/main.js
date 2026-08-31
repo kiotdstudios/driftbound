@@ -376,10 +376,50 @@ function getModuleFaceExtent(modId, dirKey) {
     if (ext && dirKey in ext) return ext[dirKey];
     return POD_DISPLAY_SIZE / 2;
   }
-  // NOTE: only one pod render size exists today (getAttachedPodRenderSize()
-  // is global, not per-type/per-direction). If per-type or directional pod
-  // sizes are ever added, this must look up modId's own size instead.
-  return getAttachedPodRenderSize() / 2;
+  // CP3e: pod content bbox is NOT square (62w x 50h before scale) -- use the
+  // real per-axis measurement, not a blanket S/2 (half the square canvas
+  // draw size, including transparent padding), which overestimated every
+  // pod face and produced the chief-reported floating/excessive-gap chains.
+  // NOTE: only one pod TYPE exists today; if per-type/directional pod art
+  // is ever added, this must look up modId's own type's measurement.
+  const ext = _podHullExtentWorld();
+  if (ext && dirKey in ext) return ext[dirKey];
+  return getAttachedPodRenderSize() / 2; // fallback before pod sprite is loaded
+}
+
+// CP3e: shared single source of truth for which face of the parent points
+// at the child, and which face of the child points back at the parent --
+// used identically by placement (getNodeRenderOffset) and strut endpoints,
+// so neither can independently drift from the other.
+function _connectorAxisKeys(node, parent) {
+  const dx = node.local_position.x - parent.local_position.x;
+  const dy = node.local_position.y - parent.local_position.y;
+  const towardChildKey = dy < 0 ? 'north' : dy > 0 ? 'south' : (dx > 0 ? 'east' : 'west');
+  return { towardChildKey, towardParentKey: OPPOSITE_DIR[towardChildKey] };
+}
+
+// CP3e: real per-axis pod hull extent, measured the same way as the ship's
+// (CP3d) -- from the pod's own content bbox relative to its sprite's
+// nominal center (the point ctx.drawImage() aligns to the connector-offset
+// position), scaled by the SAME factor getAttachedPodRenderSize() already
+// derives (pod SCALE itself is untouched, per directive).
+let _podHullExtentCache = null;
+function _podHullExtentWorld() {
+  if (_podHullExtentCache) return _podHullExtentCache;
+  const podImg = podRotations['south'];
+  const S = getAttachedPodRenderSize();
+  if (!podImg || !podImg.naturalWidth || !S) return null;
+  const bbox = _contentBBox(podImg);
+  if (!bbox) return null;
+  const scale = S / podImg.naturalWidth;
+  const imgCX = podImg.naturalWidth / 2, imgCY = podImg.naturalHeight / 2;
+  _podHullExtentCache = {
+    north: (imgCY - bbox.minY) * scale,
+    south: (bbox.maxY - imgCY) * scale,
+    east:  (bbox.maxX - imgCX) * scale,
+    west:  (imgCX - bbox.minX) * scale,
+  };
+  return _podHullExtentCache;
 }
 
 function getNodeRenderOffset(nodeId) {
@@ -393,10 +433,10 @@ function getNodeRenderOffset(nodeId) {
   const dy = node.local_position.y - parent.local_position.y;
   const dist = Math.hypot(dx, dy) || 1;
   const dirX = dx / dist, dirY = dy / dist;
-  // Connectors are only ever axis-aligned (N/E/S/W, see DIR_VEC) -- pick the
-  // exact face on each side of the joint, not an averaged/symmetric guess.
-  const towardChildKey  = dirY < 0 ? 'north' : dirY > 0 ? 'south' : (dirX > 0 ? 'east' : 'west');
-  const towardParentKey = OPPOSITE_DIR[towardChildKey];
+  // CP3e: axis-key selection now lives in one shared helper (_connectorAxisKeys)
+  // so strut endpoints (drawAttachedPods) can never independently disagree
+  // with this placement about which face is presenting on either side.
+  const { towardChildKey, towardParentKey } = _connectorAxisKeys(node, parent);
   const flushDist = getModuleFaceExtent(parentId, towardChildKey) + getModuleFaceExtent(nodeId, towardParentKey);
   return { x: parentOffset.x + dirX * flushDist, y: parentOffset.y + dirY * flushDist };
 }
@@ -1825,7 +1865,11 @@ function drawDockingPod(cx, cy) {
   // render at once attached (getNodeRenderOffset()), not the raw
   // CONNECTOR_GAP graph step -- otherwise the pod would animate INTO the
   // hull, then visually "pop" outward the instant LOCK commits.
-  const flushDist = getModuleFaceExtent(anim.slotModId, anim.slotConnDir) + getAttachedPodRenderSize() / 2;
+  // CP3e: incoming pod's own face extent (toward the parent) now uses the
+  // same real pod-hull measurement as the attached-state render/strut math,
+  // not a blanket S/2 -- keeps the docking target authoritative and
+  // consistent with where the pod will actually render once LOCK commits.
+  const flushDist = getModuleFaceExtent(anim.slotModId, anim.slotConnDir) + getModuleFaceExtent('_pending_pod_', OPPOSITE_DIR[anim.slotConnDir]);
   const clx    = lx + dv.x * flushDist;
   const cly    = ly + dv.y * flushDist;
   const tWorldX = ship.worldX + (clx * cos_a - cly * sin_a);
@@ -1982,16 +2026,32 @@ function drawAttachedPods(cx, cy) {
     const modId = p.mod_id || p.pid;
     const node = shipAssembly[modId];
     if (!node) continue;
-    // CP3c: flush render offset (direction from graph, distance recomputed)
+    const parentId = node.parent || 'core';
+    const parent = shipAssembly[parentId] || shipAssembly.core;
+    // CP3c/e: flush render offset (direction from graph, distance recomputed)
     // -- NOT the raw local_position, which sits inside the parent's hull.
     const cOff = getNodeRenderOffset(modId);
-    const pOff = getNodeRenderOffset(node.parent || 'core');
+    const pOff = getNodeRenderOffset(parentId);
     const cp = rotLocal(cOff.x, cOff.y, a);
     const pp = rotLocal(pOff.x, pOff.y, a);
+    // CP3e: strut spans the VISIBLE FACE EDGE of each sprite, not
+    // center-to-center -- so it can never terminate inside a sprite, never
+    // silently extend through one, and always renders exactly the true gap
+    // (zero-length/invisible when perfectly flush), regardless of either
+    // module's own extent. Uses the same _connectorAxisKeys + getModuleFaceExtent
+    // this edge's placement was computed from -- one authoritative source.
+    const { towardChildKey, towardParentKey } = _connectorAxisKeys(node, parent);
+    const segDx = cp.x - pp.x, segDy = cp.y - pp.y;
+    const segLen = Math.hypot(segDx, segDy) || 1;
+    const ux = segDx / segLen, uy = segDy / segLen;
+    const parentExtent = getModuleFaceExtent(parentId, towardChildKey);
+    const childExtent  = getModuleFaceExtent(modId, towardParentKey);
+    const ex1 = pp.x + ux * parentExtent, ey1 = pp.y + uy * parentExtent;
+    const ex2 = cp.x - ux * childExtent,  ey2 = cp.y - uy * childExtent;
     ctx.save();
     ctx.strokeStyle = (p.color || '#38bdf8') + 'aa';
     ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(cx + pp.x, cy + pp.y); ctx.lineTo(cx + cp.x, cy + cp.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + ex1, cy + ey1); ctx.lineTo(cx + ex2, cy + ey2); ctx.stroke();
     ctx.restore();
   }
 
@@ -4625,6 +4685,7 @@ window.__DB = {
   get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
   // -- CP3c connector-placement test bridge --
   get shipHullHalfExtent(){ return _shipHullExtentWorld(); },
+  get podHullHalfExtent(){ return _podHullExtentWorld(); },
   getNodeRenderOffset(nodeId){ return getNodeRenderOffset(nodeId); },
   getModuleFaceExtent(modId, dirKey){ return getModuleFaceExtent(modId, dirKey); },
 };

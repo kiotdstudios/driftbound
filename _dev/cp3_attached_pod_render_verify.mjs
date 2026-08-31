@@ -155,13 +155,17 @@ async function main() {
 
   const shipHalfWidth = await page.evaluate(() => window.__DB.getModuleFaceExtent('core', 'east')); // CP3d: connector is E, use real east-axis extent
   const S             = await page.evaluate(() => window.__DB.attachedPodRenderSize);
-  const podHalfWidth  = S / 2;
+  // CP3e: pod's own near-face extent is now measured per-axis (real visible
+  // bounds via _podHullExtentWorld()), not a blanket S/2 -- the pod's face
+  // toward the ship on an E connector is its WEST face.
+  const podHalfWidth  = await page.evaluate((pid) => window.__DB.getModuleFaceExtent(pid, 'west'), pid);
   const renderOffset  = await page.evaluate((pid) => window.__DB.getNodeRenderOffset(pid), pid);
   const expectedFlushDist = shipHalfWidth + podHalfWidth;
 
-  await check('render offset uses flush distance (shipHalfWidth + podHalfWidth), not raw CONNECTOR_GAP local_position', async () => {
+  await check('render offset uses flush distance (shipHalfWidth + pod\'s real per-axis west-face extent), not raw CONNECTOR_GAP local_position and not a blanket S/2', async () => {
     ok(shipHalfWidth !== null, 'shipHalfWidthWorld should be measurable once sprites are loaded');
-    ok(Math.abs(renderOffset.x - expectedFlushDist) < 1, `expected render offset x ~= ${expectedFlushDist} (shipHalfWidth ${shipHalfWidth} + podHalfWidth ${podHalfWidth}), got ${renderOffset.x}`);
+    ok(podHalfWidth !== null, 'pod west-face extent should be measurable once sprites are loaded');
+    ok(Math.abs(renderOffset.x - expectedFlushDist) < 1, `expected render offset x ~= ${expectedFlushDist} (shipHalfWidth ${shipHalfWidth} + pod west-face extent ${podHalfWidth}), got ${renderOffset.x}`);
     ok(Math.abs(renderOffset.y) < 1, `expected render offset y ~= 0 for an E connector, got ${renderOffset.y}`);
     ok(renderOffset.x > 46, `flush distance (${renderOffset.x}) must be greater than the raw graph CONNECTOR_GAP (46) -- otherwise this is the old overlap bug`);
   });
