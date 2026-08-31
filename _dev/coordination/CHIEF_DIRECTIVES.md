@@ -142,17 +142,14 @@ reflected in `PROJECT_STATUS.md` and/or `DECISIONS.md`. Those two files
 remain the canonical, current-state record; `TEAM_NOTES.md` and the
 per-agent status logs are the historical/discovery record that feeds them.
 
-## Directive Template (for Chief use)
-
-```
-
 ---
 
 ## DIRECTIVE: CP3e — Multi-pod chain connector continuity
 - **ASSIGNED TO:** Aki / Core Gameplay
 - **BRANCH:** `agent/core-gameplay`
 - **BASELINE:** `agent/core-gameplay @ aca2261` (CP3d)
-- **STATUS:** GO
+- **STATUS:** APPROVED / HOLD — Chief visual review accepted; pending integration
+- **CHIEF VISUAL VERDICT (2026-08-31):** **ACCEPT CP3e as the current art-complete baseline.** North and south are visually good. East and west remain imperfect, and diagonal/omnidirectional faces likely need follow-up, but these are directional pod-art limitations rather than a CP3e geometry blocker. Do not add compensating code hacks around temporary art. Revisit the remaining directional-face quality when directional pod art exists.
 - **QA EVIDENCE:** Chief screenshot supplied 2026-08-31 shows a north-side chain of two pods. The lower pod is separated from the ship by an excessive exposed line, while the upper pod appears to float with a large empty gap and no visible connector/strut. CP3d therefore does not yet produce a visually continuous multi-module assembly.
 - **OBJECTIVE:** Correct attached-module placement and connector rendering for every parent→child edge in a chained assembly, including core→pod and pod→pod. Each module must read as physically connected: sprite edges must not overlap, float apart, or lose the visible connector between them.
 - **REQUIREMENTS:**
@@ -172,6 +169,10 @@ per-agent status logs are the historical/discovery record that feeds them.
   - Docking completion must not visibly jump to a different target position.
   - Existing CP2 docking, assembly, interaction, hover, map-input, smoke, and CP3 render regressions must pass sequentially. Report any known timing flake separately and rerun it in isolation before classifying it as environmental.
 - **STOP CONDITION:** Write the complete checkpoint to `AKI_STATUS.md`, including final commit hash and explicit pushed confirmation; commit and push **only** to `agent/core-gameplay`; then HOLD for Chief visual review. Do not self-integrate.
+
+## Directive Template (for Chief use)
+
+```
 ## DIRECTIVE: <ID>
 - ASSIGNED TO:
 - BRANCH:
