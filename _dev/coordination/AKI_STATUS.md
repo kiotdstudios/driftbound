@@ -30,6 +30,19 @@ your implementation checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: A2 / CP2 — REWORK PASS
+- STATUS: COMPLETE (rework)
+- BRANCH: agent/core-gameplay
+- COMMIT: cb0446d
+- FILES CHANGED: src/systems/docking.js, src/main.js (drawDockingPod field rename only)
+- REWORK SUMMARY: Two architecture issues fixed per chief REWORK verdict:
+  1. RAW REFS → STABLE IDs: _s.pod and _s.slot were raw JS object references. Replaced with _s.podPid (string), _s.slotModId (string), _s.slotConnId (string). Added _getPod()/_getMod()/_getConn() helpers that look up fresh from context getters at every use site. No cached object refs remain in module state.
+  2. MISSING STATES: DOCK_STATE enum was missing COMPLETE and ABORTING. Full state machine per directive now implemented: IDLE→ALIGNING→PULLING_IN→LOCKING→COMPLETE + ABORTING. abortDocking() transits through ABORTING before reset; _commitDock() transits through COMPLETE before reset. isDocking() explicitly checks the three animation phases only (not COMPLETE/ABORTING).
+- TEST RESULTS: cp2_docking_verify.mjs 22/22 PASS | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS
+- KNOWN WARNINGS: None
+- PUSHED TO GITHUB: YES — agent/core-gameplay @ cb0446d
+- QUESTIONS FOR CHIEF: None. Holding for next directive.
+
 ### DIRECTIVE ID: A2 / CP2
 - STATUS: COMPLETE
 - BRANCH: agent/core-gameplay
