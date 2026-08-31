@@ -15,7 +15,28 @@ await p.waitForTimeout(900);
 
 let PASS = 0, FAIL = 0;
 // CP2: wait for docking sequence to complete (replaces old instant-attach behavior)
-async function waitForDock(timeout=3000){const t0=Date.now();while(Date.now()-t0<timeout){const d=await p.evaluate(()=>window.__DB.isDocking);if(!d)return;await p.waitForTimeout(50);}throw new Error('waitForDock timed out');}
+// CP2 fix (Integration Pass 03, Chief-approved): the original helper only checked
+// isDocking() once and returned as soon as it read false -- but if called right after
+// a keyboard.press(), the game's rAF loop may not have processed the E-edge into
+// startDocking() yet, so isDocking() is STILL false (never started), and the helper
+// would return immediately as if docking had already finished. Fixed by requiring an
+// OBSERVED false -> true -> false lifecycle: first wait for isDocking to become true
+// (docking actually started), only then wait for it to return to false (completed).
+async function waitForDock(timeout=3000){
+  const t0 = Date.now();
+  let started = false;
+  while (Date.now() - t0 < timeout) {
+    if (await p.evaluate(() => window.__DB.isDocking)) { started = true; break; }
+    await p.waitForTimeout(50);
+  }
+  if (!started) throw new Error('waitForDock: docking never observed to start (isDocking stayed false)');
+  const t1 = Date.now();
+  while (Date.now() - t1 < timeout) {
+    if (!(await p.evaluate(() => window.__DB.isDocking))) return;
+    await p.waitForTimeout(50);
+  }
+  throw new Error('waitForDock: docking started but did not complete within timeout');
+}
 const chk = (n, c, d = '') => { if (c) { PASS++; console.log('  PASS  ' + n); } else { FAIL++; console.log('  FAIL  ' + n + '   ' + d); } };
 const ev = fn => p.evaluate(fn);
 
