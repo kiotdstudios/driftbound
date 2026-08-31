@@ -727,7 +727,7 @@ const DEV_MODE = true;
 // All developer shortcuts live here — one definition per command.
 // Execution function fires only when DEV_MODE is true and no text input has focus.
 // Keys: Slash=FullFuel, KeyH=FullHull, KeyO=FullOxygen(stub),
-//       KeyR=TestResources, KeyP=SpawnTestPod
+//       KeyG=TestResources, KeyP=SpawnTestPod
 const DEV_COMMANDS = {
   Slash: {
     key: 'Slash', label: '/ — Full Fuel',
@@ -753,8 +753,8 @@ const DEV_COMMANDS = {
       DevLog.info('DevCheat', 'DEV CHEAT: Oxygen stub triggered (no-op)');
     },
   },
-  KeyR: {
-    key: 'KeyR', label: 'R — Give Test Resources',
+  KeyG: {
+    key: 'KeyG', label: 'G — Give Test Resources',
     exec() {
       ship.ore          += 25;
       ship.mineral      += 10;
@@ -2534,7 +2534,7 @@ const DEV_PANEL = [
   { k: '/',             d: 'Full Fuel' },
   { k: 'H',             d: 'Full Hull' },
   { k: 'O',             d: 'Full Oxygen' },
-  { k: 'R',             d: 'Test Resources' },
+  { k: 'G',             d: 'Test Resources' },
   { k: 'P',             d: 'Spawn Test Pod' },
   { s: 'MISC' },
   { k: '[ / ]',         d: 'Cycle Background' },
