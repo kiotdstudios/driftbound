@@ -1,4 +1,5 @@
 import { createEnvironment, ENV_CONFIG } from './render/background.js?v=20260830-5';
+import { createRegionalMap } from './render/map.js';
 import { DevLog } from './systems/devTools.js';
 import {
   keys, inputLog, INPUT_LOG_MAX,
@@ -31,6 +32,11 @@ ctx.imageSmoothingEnabled = false;
 
 // Deep-space environment (parallax nebula + procedural stars/particles).
 const env = createEnvironment(ctx, canvas);
+
+// Regional map overlay (World/UI ownership — see OWNERSHIP.md). Owns its own
+// open/closed state + rendering; consumes world data only through explicit
+// render(state) inputs. Never mutates ship/mining/docking/save state.
+const regionalMap = createRegionalMap(ctx, canvas);
 
 // DevLog extracted to src/systems/devTools.js (Phase 1, see MIGRATION_PLAN.md).
 // Imported at top of file. window.DevLog is set inside devTools.js itself.
@@ -528,7 +534,8 @@ const particles = [];
 
 // keys{} moved to src/core/input.js (Phase 2) — imported at top of file.
 
-let   mapMode   = false;  // true while regional map overlay is open (M key)
+// mapMode moved into the regional-map module (src/render/map.js) — see
+// regionalMap.isOpen()/toggle() above (World/UI ownership, OWNERSHIP.md).
 
 
 
@@ -726,8 +733,8 @@ onKeyDown(e => {
   if (e.code === 'KeyM') {
     // Don't open map while in interior or during a fade
     if (!interiorMode && interiorFadeDir === 0) {
-      mapMode = !mapMode;
-      DevLog.info('MapSystem', mapMode ? 'Regional map opened' : 'Regional map closed');
+      const _nowOpen = regionalMap.toggle();
+      DevLog.info('MapSystem', _nowOpen ? 'Regional map opened' : 'Regional map closed');
     }
     e.preventDefault();
     return;
@@ -2764,212 +2771,9 @@ function drawMinimap() {
   ctx.restore();
 }
 
-
-// ─── REGIONAL MAP OVERLAY ─────────────────────────────────────────────────────
-// Press M to open/close. Shows local sector: player, pods, asteroids, ore, signals.
-// Suspends movement while open. MVP — no fog of war, full range shown.
-function drawRegionalMap() {
-  const W = canvas.width, H = canvas.height;
-  const t = Date.now();
-
-  // ── Full-screen dim ──
-  ctx.fillStyle = 'rgba(0,4,12,0.92)';
-  ctx.fillRect(0, 0, W, H);
-
-  // ── Map panel ──
-  const MPW = Math.min(900, W - 80);   // map panel width
-  const MPH = Math.min(680, H - 80);   // map panel height
-  const MPX = (W - MPW) / 2;
-  const MPY = (H - MPH) / 2;
-
-  // Panel background + border
-  ctx.fillStyle = 'rgba(2,8,18,0.96)';
-  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
-  ctx.fill();
-  ctx.strokeStyle = '#4FC3C3';
-  ctx.lineWidth = 1.5;
-  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 10;
-  roundRect(ctx, MPX, MPY, MPW, MPH, 6);
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  // Title
-  ctx.save();
-  ctx.font = 'bold 14px "Courier New", monospace';
-  ctx.fillStyle = '#4FC3C3';
-  ctx.textAlign = 'center';
-  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 8;
-  ctx.fillText('◈  SECTOR MAP', W/2, MPY + 24);
-  ctx.shadowBlur = 0;
-
-  // Ship name + coords subtitle
-  ctx.font = '11px "Courier New", monospace';
-  ctx.fillStyle = '#3a5060';
-  ctx.fillText(
-    (ship.shipType ? ship.shipType.name : 'SHIP') +
-    '  ·  ' + Math.floor(ship.worldX) + ' / ' + Math.floor(ship.worldY),
-    W/2, MPY + 42
-  );
-  ctx.restore();
-
-  // ── Map drawing area (inside panel, with margin) ──
-  const MX = MPX + 40,  MY = MPY + 60;   // draw area origin
-  const MW = MPW - 80,  MH = MPH - 100;  // draw area size
-  const MCX = MX + MW/2, MCY = MY + MH/2; // center of map
-
-  // Draw area clip + background
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(MX, MY, MW, MH);
-  ctx.clip();
-
-  ctx.fillStyle = 'rgba(0,4,14,0.98)';
-  ctx.fillRect(MX, MY, MW, MH);
-
-  // Grid lines
-  const RANGE = 3500;   // world units visible from center to edge
-  const SCALE = Math.min(MW, MH) / 2 / RANGE;
-
-  const gridStep = 500;   // world units per grid line
-  ctx.strokeStyle = '#4FC3C310'; ctx.lineWidth = 0.5;
-  for (let wx = -RANGE; wx <= RANGE; wx += gridStep) {
-    const sx = MCX + wx * SCALE;
-    ctx.beginPath(); ctx.moveTo(sx, MY); ctx.lineTo(sx, MY+MH); ctx.stroke();
-  }
-  for (let wy = -RANGE; wy <= RANGE; wy += gridStep) {
-    const sy = MCY + wy * SCALE;
-    ctx.beginPath(); ctx.moveTo(MX, sy); ctx.lineTo(MX+MW, sy); ctx.stroke();
-  }
-
-  // Cross-hairs at player center
-  ctx.strokeStyle = '#4FC3C322'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(MCX, MY); ctx.lineTo(MCX, MY+MH); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(MX, MCY); ctx.lineTo(MX+MW, MCY); ctx.stroke();
-
-  // ── Asteroids — orange dots ──
-  for (const ast of getAsteroids()) {
-    const dx = (ast.worldX - ship.worldX) * SCALE;
-    const dy = (ast.worldY - ship.worldY) * SCALE;
-    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
-    const r = Math.max(2, (ast.type ? ast.type.w / 14 : 3));
-    ctx.fillStyle = '#f97316';
-    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 4;
-    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, r, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
-    // Type label on hover is MVP-deferred; show size hint with opacity
-  }
-
-  // ── Ore pickups — green blips ──
-  for (const o of (typeof orePickups !== 'undefined' ? orePickups : [])) {
-    const dx = (o.worldX - ship.worldX) * SCALE;
-    const dy = (o.worldY - ship.worldY) * SCALE;
-    if (Math.abs(dx) > MW/2 + 4 || Math.abs(dy) > MH/2 + 4) continue;
-    ctx.fillStyle = '#22c55e';
-    ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 5;
-    ctx.beginPath(); ctx.arc(MCX+dx, MCY+dy, 3, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-
-  // ── World pods — cyan diamonds ──
-  const podBlink = 0.6 + 0.4 * Math.sin(t * 0.003);
-  for (const pod of worldPods) {
-    const dx = (pod.worldX - ship.worldX) * SCALE;
-    const dy = (pod.worldY - ship.worldY) * SCALE;
-    if (Math.abs(dx) > MW/2 + 10 || Math.abs(dy) > MH/2 + 10) continue;
-    const pCol = (POD_TYPES[pod.type]||{}).color || '#38bdf8';
-    const px = MCX+dx, py = MCY+dy;
-    ctx.save();
-    ctx.globalAlpha = podBlink;
-    ctx.translate(px, py); ctx.rotate(Math.PI/4);
-    ctx.fillStyle = pCol;
-    ctx.shadowColor = pCol; ctx.shadowBlur = 8;
-    ctx.fillRect(-5, -5, 10, 10);
-    ctx.shadowBlur = 0;
-    ctx.restore();
-    // Label
-    ctx.font = '10px "Courier New", monospace';
-    ctx.fillStyle = pCol + 'cc';
-    ctx.textAlign = 'center';
-    ctx.fillText((POD_TYPES[pod.type]||{label:'POD'}).label, MCX+dx, MCY+dy - 11);
-  }
-
-  // ── Home marker (first worldPod or origin) ──
-  const homeX = worldPods.length > 0 ? worldPods[0].worldX : 0;
-  const homeY = worldPods.length > 0 ? worldPods[0].worldY : 0;
-  const hdx = (homeX - ship.worldX) * SCALE;
-  const hdy = (homeY - ship.worldY) * SCALE;
-  if (Math.abs(hdx) <= MW/2 && Math.abs(hdy) <= MH/2) {
-    ctx.fillStyle = '#FFD700';
-    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12;
-    ctx.font = '14px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('⌂', MCX+hdx, MCY+hdy + 5);
-    ctx.shadowBlur = 0;
-  }
-
-  // ── Player dot (center) ──
-  ctx.fillStyle = '#ffffff';
-  ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 12;
-  ctx.beginPath(); ctx.arc(MCX, MCY, 5, 0, Math.PI*2); ctx.fill();
-  ctx.shadowBlur = 0;
-
-  // Direction arrow from player
-  const dIdx = DIRS.indexOf(ship.dir);
-  if (dIdx >= 0) {
-    const da = DIR_ANGLES_DEG[dIdx] * Math.PI / 180;
-    ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 2;
-    ctx.shadowColor = '#4FC3C3'; ctx.shadowBlur = 5;
-    ctx.beginPath();
-    ctx.moveTo(MCX + Math.cos(da)*7, MCY + Math.sin(da)*7);
-    ctx.lineTo(MCX + Math.cos(da)*18, MCY + Math.sin(da)*18);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-
-  ctx.restore();  // end clip
-
-  // ── Map border ──
-  ctx.strokeStyle = '#4FC3C330'; ctx.lineWidth = 1;
-  ctx.strokeRect(MX, MY, MW, MH);
-
-  // ── Scale bar ──
-  const scalePx = 500 * SCALE;  // 500 world units
-  const sbX = MPX + MPW - 120, sbY = MPY + MPH - 24;
-  ctx.strokeStyle = '#4FC3C3'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(sbX, sbY); ctx.lineTo(sbX + scalePx, sbY); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(sbX, sbY-4); ctx.lineTo(sbX, sbY+4); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(sbX+scalePx, sbY-4); ctx.lineTo(sbX+scalePx, sbY+4); ctx.stroke();
-  ctx.font = '9px "Courier New", monospace';
-  ctx.fillStyle = '#4FC3C3';
-  ctx.textAlign = 'center';
-  ctx.fillText('500u', sbX + scalePx/2, sbY + 12);
-
-  // ── Legend ──
-  const lx = MPX + 16, ly = MPY + MPH - 72;
-  ctx.font = '10px "Courier New", monospace';
-  ctx.textAlign = 'left';
-  const legend = [
-    { col:'#ffffff', label:'YOU'      },
-    { col:'#f97316', label:'ASTEROID' },
-    { col:'#38bdf8', label:'POD'      },
-    { col:'#22c55e', label:'ORE'      },
-    { col:'#FFD700', label:'HOME'     },
-  ];
-  legend.forEach((item, i) => {
-    ctx.fillStyle = item.col;
-    ctx.beginPath(); ctx.arc(lx+6, ly + i*16 + 4, 4, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = item.col + 'aa';
-    ctx.fillText(item.label, lx+16, ly + i*16 + 8);
-  });
-
-  // ── Close hint ──
-  ctx.save();
-  ctx.font = '11px "Courier New", monospace';
-  ctx.fillStyle = '#2a4050';
-  ctx.textAlign = 'center';
-  ctx.fillText('[M]  CLOSE MAP', W/2, MPY + MPH - 10);
-  ctx.restore();
-}
+// Regional map overlay extracted to src/render/map.js (World/UI ownership,
+// see OWNERSHIP.md) — behavior-preserving move. See createRegionalMap() /
+// regionalMap.render() call site in loop() below.
 
 
 // ─── DEV DIAGNOSTICS OVERLAY (F2) ─────────────────────────────────────────────
@@ -3004,7 +2808,7 @@ function drawDiagnostics() {
       col: fpsDisplay < 30 ? ERR : fpsDisplay < 50 ? WARN : COL },
     { label:'PLAYER POS',   val: Math.floor(ship.worldX)+' / '+Math.floor(ship.worldY), col: COL },
     { label:'SHIP DIR',     val: ship.dir.toUpperCase(),              col: COL },
-    { label:'SCENE',        val: mapMode ? 'REGIONAL MAP' : 'FLIGHT', col: COL },
+    { label:'SCENE',        val: regionalMap.isOpen() ? 'REGIONAL MAP' : 'FLIGHT', col: COL },
     { label:'ASSETS TOTAL', val: totalAssets,                         col: COL },
     { label:'ASSETS LOADED',val: loadedAssets,                        col: loadedAssets === totalAssets ? COL : WARN },
     { label:'ASSETS FAILED',val: failedAssets,                        col: failedAssets > 0 ? ERR : COL },
@@ -3013,7 +2817,7 @@ function drawDiagnostics() {
     { label:'FUEL',         val: ship.fuel.toFixed(2)+' / '+FUEL_CAPACITY, col: COL },
     { label:'HULL',         val: ship.hp+' / '+SHIP_MAX_HP,          col: ship.hp < 30 ? ERR : COL },
     { label:'ORE',          val: cargoUsed()+' / '+CARGO_LIMIT,      col: COL },
-    { label:'MAP MODE',     val: mapMode ? 'OPEN' : 'CLOSED',        col: COL },
+    { label:'MAP MODE',     val: regionalMap.isOpen() ? 'OPEN' : 'CLOSED',        col: COL },
     { label:'INTERIOR',     val: interiorMode ? 'YES' : 'NO',        col: COL },
     { label:'THRUST INPUT', val: _thrusting ? 'ON' : 'OFF',           col: _thrusting ? WARN : DIM },
     { label:'BOOST INPUT',  val: _boosting  ? 'ON' : 'OFF',           col: _boosting  ? WARN : DIM },
@@ -3360,11 +3164,14 @@ function update() {
   // Smooth boost ramp: 0=cruise, 1=full boost
 
   // Map open: freeze ship movement but keep render loop alive for map draw
-  if (mapMode) {
+  // (mapMode now lives in the World/UI regional-map module; gameplay reads
+  // it through the explicit isOpen() query rather than owning the flag)
+  const _mapOpen = regionalMap.isOpen();
+  if (_mapOpen) {
     ship.vx *= 0.88;  // gentle bleed-off so ship doesn't fly forever when map closes
     ship.vy *= 0.88;
   }
-  const shiftHeld = !mapMode && (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
+  const shiftHeld = !_mapOpen && (keys['ShiftLeft'] || keys['ShiftRight']) && ship.fuel > 0;
 
   // Boost RAMP-UP is gradual (engine spool). Boost END is IMMEDIATE on Shift release:
   // releasing Shift instantly stops boost acceleration; existing momentum then coasts.
@@ -3382,7 +3189,7 @@ function update() {
     const t = (THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp) * massAccelMult();
     if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
     if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
-    if (!mapMode && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
+    if (!_mapOpen && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
     if (keys['KeyD'] || keys['ArrowRight']) ax += t;
     if (ax !== 0 && ay !== 0) { ax *= 0.7071; ay *= 0.7071; }
     thrusting = (ax !== 0 || ay !== 0);
@@ -3703,8 +3510,11 @@ function loop(now) {
 
   drawToast();
 
-  // Regional map overlay — rendered last so it covers everything
-  if (mapMode) drawRegionalMap();
+  // Regional map overlay — rendered last so it covers everything (World/UI
+  // ownership; module owns rendering, we pass world data in explicitly)
+  if (regionalMap.isOpen()) {
+    regionalMap.render({ ship, asteroids: getAsteroids(), orePickups, worldPods, podTypes: POD_TYPES });
+  }
 
 
 
