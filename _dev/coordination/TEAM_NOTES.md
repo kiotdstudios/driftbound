@@ -53,3 +53,48 @@ in that exact folder before trusting a browser-side manual QA result.
 
 **Status:** flagged to chief for a decision; no folder or process changes
 made yet on the user's machine.
+
+## 2026-08-31 (follow-up) — Aki: port conflict resolved, DRIFTBOUND folder inspected, CP3b-2 re-confirmed GOOD
+
+**Port 8420 fix.** Killed both stale listeners (PID 21444, PID 13988 — both were
+plain `python -m http.server 8420` processes, one bound wildcard, one
+localhost-only). Verified `netstat` showed a fully clear port afterward.
+Started exactly one fresh server from `Documents/driftbound_work/agent-core`
+(the intended test worktree), confirmed via `netstat` that only one PID is
+now bound to 8420, and confirmed via browser (`window.__DB.attachedPodRenderSize`)
+that this server is serving the current build (~126.13, matching CP3b-2).
+
+**DRIFTBOUND (8/30 folder) inspected — not touched, not deleted.**
+- **Not git-controlled** — no `.git` directory. No branch/HEAD applicable.
+- It is a plain folder copy of an earlier project state, missing files that
+  `driftbound_work/agent-core` has (`OWNERSHIP.md`, `START_GAME.bat`,
+  `driftbound_flight_test.html.bak`), and its `index.html` cache-bust version
+  tag is one version behind agent-core's (`main.js?v=20260830-5` vs
+  `...-6`) — i.e. it is stale relative to the working repo.
+- It DOES contain a handful of files not present in `driftbound_work` at
+  all: `_check.txt`, `_idx.txt`, `_inspect.txt`, `_keys.txt`, `_patch_blue.py`,
+  `_test.txt`, and a 16MB `test blue map.html`. These read as scratch/debug
+  artifacts from earlier experimentation, not obviously load-bearing, but
+  not yet confirmed disposable — no deletion has happened.
+- Its `src/` layout also differs: it has `assets/`, `player/`, `world/`
+  subfolders that don't exist in the current modular `src/` in agent-core
+  (which only has `core/`, `render/`, `systems/`, `main.js`) — consistent
+  with DRIFTBOUND being a pre-refactor snapshot, not an actively maintained
+  parallel branch.
+- **Recommendation unchanged:** before archiving/deleting, someone should
+  specifically check whether the unique scratch files above hold anything
+  worth keeping; otherwise DRIFTBOUND can be archived (not necessarily
+  deleted) once confirmed. No action taken yet — awaiting chief's call.
+
+**CP3b-2 re-confirmed GOOD against the clean, single-server environment.**
+- Docked at all 4 connector directions (N/E/S/W) fresh against the newly
+  started clean server — pod substantial, flush, no gap, ship hull clearly
+  visible in every direction (screenshots taken, held locally, not committed).
+- Ran the actual committed `_dev/hover_targeting_verify.mjs` suite against
+  the clean server: **22/22 passed** — world pod / attached pod / asteroid /
+  empty-space hover correct at all 5 zoom levels, hover confirmed decoupled
+  from the E-key resolver.
+- **Conclusion: the "still broken" report was an environment false-negative**
+  (stale server on port 8420 answering ahead of the fresh one). CP3b-2
+  (`0655257`) is closed as correct. No further code changes needed from Aki
+  on this directive.

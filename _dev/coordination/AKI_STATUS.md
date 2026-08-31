@@ -28,6 +28,25 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF:
 ```
 
+### DIRECTIVE ID: Dev-Environment QA Investigation — RESOLVED, CP3b-2 re-confirmed GOOD
+- STATUS: RESOLVED — environment issue fixed, CP3b-2 re-tested clean, closed as environment false-negative
+- BRANCH: agent/core-gameplay
+- COMMIT: a5d5ad4 (no code change — this entry documents the environment fix + re-verification of already-pushed CP3b-2 commit 0655257)
+- FILES CHANGED: none (diagnostics + retest only)
+- IMPLEMENTATION SUMMARY: Killed both stale port-8420 listeners on the user's machine (PID 21444, PID 13988 -- both plain `python -m http.server 8420`, one wildcard-bound, one localhost-only). Verified via netstat that port 8420 was fully clear afterward. Started exactly one fresh server from Documents/driftbound_work/agent-core (the intended test worktree) as a persistent background process, confirmed via netstat that only one PID is now bound, and confirmed via browser (window.__DB.attachedPodRenderSize reads ~126.13) that it is serving the current build. Separately inspected Documents/DRIFTBOUND (the 8/30 folder) per chief's instruction NOT to delete/consolidate yet: it is not git-controlled (no .git directory, so no branch/HEAD applies), it is stale relative to agent-core (index.html cache-bust tag one version behind, missing OWNERSHIP.md/START_GAME.bat/driftbound_flight_test.html.bak that agent-core has), and its src/ layout is a pre-refactor structure (assets/player/world subfolders) not matching the current modular src/. It does contain a handful of files not present anywhere in driftbound_work (_check.txt, _idx.txt, _inspect.txt, _keys.txt, _patch_blue.py, _test.txt, a 16MB "test blue map.html") -- read as scratch/debug artifacts, not yet confirmed disposable. No files touched, moved, or deleted in DRIFTBOUND. Full details logged in TEAM_NOTES.md. With the port conflict resolved, re-ran the full manual-style QA against the clean single server: docked at all 4 connector directions (N/E/S/W) -- pod substantial, flush, no gap, ship hull visible in every direction (screenshots taken, held locally). Ran the actual committed _dev/hover_targeting_verify.mjs suite against the clean server (not an ad-hoc script) for hover: 22/22 passed across all 5 zoom levels for world pod / attached pod / asteroid / empty-space hover, plus the two isolation checks (no second E consumer, hover not range-gated).
+- TEST RESULTS: hover_targeting_verify.mjs 22/22 PASS (run fresh against the clean server) | 4-direction docking visual retest: 4/4 correct (N/E/S/W, screenshots held locally, not committed)
+- RUNTIME READY: PASS -- single clean server confirmed on port 8420, serving current build
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: none
+- KNOWN WARNINGS: none new
+- BLOCKERS: none -- previous blocker (port conflict) resolved
+- BUGS DISCOVERED: none new this entry (both bugs from the prior entry -- port conflict, duplicate folders -- addressed/documented, not fully closed: DRIFTBOUND folder consolidation still pending chief's decision)
+- BAD NEWS / UNEXPECTED FINDINGS: none -- this entry is good news. The original "still broken" report is confirmed to have been an environment false-negative, not a CP3b-2 regression.
+- QUESTIONS FOR CHIEF: none blocking.
+- DECISIONS NEEDED FROM CHIEF: whether/when to archive Documents/DRIFTBOUND once the handful of unique scratch files in it (listed above, in TEAM_NOTES.md) are checked for anything worth keeping. Not urgent -- no active risk now that the port conflict is fixed and both agents/QA know to always confirm which folder a running server was started from.
+- RECOMMENDED NEXT ACTION: Close out the CP3b-2 QA cycle as GOOD/GO. Chief free to do a final manual pass on this same clean server (already running on port 8420 from driftbound_work/agent-core) to confirm firsthand before marking the directive fully closed.
+- CURRENT HOLD/GO STATE: GO -- CP3b-2 is confirmed correct in code and now confirmed correct in a clean, verified environment. Only the (non-blocking, non-urgent) DRIFTBOUND archival decision remains open.
+
 ### DIRECTIVE ID: Dev-Environment QA Investigation (CP3b-2 retest blocked)
 - STATUS: BLOCKED — code confirmed correct, local dev environment issue preventing chief/user retest of CP3b-2
 - BRANCH: agent/core-gameplay
