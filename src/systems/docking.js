@@ -166,9 +166,36 @@ export function abortDocking(_reason) {
   _reset();
 }
 
+// Release reserved resources without committing the dock.
+// Called when a lookup becomes null mid-dock, or in _commitDock's null guard.
+// Works in any phase; does not depend on isDocking() being true.
+function _safeRelease() {
+  // Restore reserved ore to available.
+  if (_s.reservedOre > 0) {
+    _ctx.ship.ore += _s.reservedOre;
+  }
+  // Free the connector if it is still in the 'reserved' state.
+  const conn = _getConn();
+  if (conn && conn.state === 'reserved') {
+    conn.free  = true;
+    conn.state = 'free';
+    // connected_to is only written at commit, so no graph cleanup needed.
+  }
+  _reset();
+}
+
 // Called every frame from loop() with dt in ms.
 export function updateDocking(dt) {
   if (!isDocking()) return;
+
+  // Safety: detect if the pod or connector was invalidated externally mid-dock
+  // (e.g. pod removed from worldPods by another system). Route through safe
+  // release so reserved ore and the connector slot are not abandoned.
+  if (!_getPod() || !_getMod() || !_getConn()) {
+    _ctx.showToast('DOCKING ABORTED', '#ef4444');
+    _safeRelease();
+    return;
+  }
 
   _s.elapsed += dt;
 
@@ -186,9 +213,6 @@ export function updateDocking(dt) {
 // ── Private ───────────────────────────────────────────────────────────────────
 
 function _commitDock() {
-  // Transition to COMPLETE; then flush state at end of this call.
-  _s.phase = DOCK_STATE.COMPLETE;
-
   const {
     getShipAssembly, getPOD_TYPES, makeModuleNode,
     removeWorldPodByPid, addAttachedPod, applyCargoBonus,
@@ -202,10 +226,15 @@ function _commitDock() {
   const shipAssembly = getShipAssembly();
 
   if (!pod || !mod || !conn) {
-    // Guard against edge case where worldPod disappeared during docking (shouldn't happen).
-    _reset();
+    // Pod or connector became invalid before LOCK completed.
+    // Release reserved resources via safe path — do NOT raw-reset.
+    showToast('DOCKING ABORTED', '#ef4444');
+    _safeRelease();
     return;
   }
+
+  // All refs valid — transition to COMPLETE and commit the dock.
+  _s.phase = DOCK_STATE.COMPLETE;
 
   const podType = getPOD_TYPES()[pod.type] || {};
 

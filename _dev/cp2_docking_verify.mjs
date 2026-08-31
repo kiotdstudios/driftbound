@@ -337,6 +337,74 @@ async function main() {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────
+  console.log('\n[CP2] Mid-dock invalidation safety');
+
+  const safePid = await injectTestPod(page);
+  await page.evaluate(() => { window.__DB.ship.ore = 50; });
+
+  // Snapshot ore before docking starts
+  const oreBeforeInvalid = await getDB(page, () => window.__DB.ship.ore);
+
+  // Start dock and wait until PULLING_IN
+  await page.evaluate((pid) => window.__DB.startDockingByPid(pid), safePid);
+  await page.waitForTimeout(600); // past ALIGNING (500 ms) -> PULLING_IN
+  const phaseCheck = await getDB(page, () => window.__DB.dockingState.phase);
+  ok(phaseCheck === 'PULLING_IN', `expected PULLING_IN before splice, got ${phaseCheck}`);
+
+  // Capture reserved slot IDs so we can inspect the connector after release
+  const slotSnapshot = await getDB(page, () => ({
+    mod:  window.__DB.dockingState.slotMod,
+    conn: window.__DB.dockingState.slotConn,
+  }));
+
+  // Invalidate: splice the pod from worldPods while docking is active
+  await page.evaluate((pid) => {
+    const idx = window.__DB.worldPods.findIndex(p => p.pid === pid);
+    if (idx !== -1) window.__DB.worldPods.splice(idx, 1);
+  }, safePid);
+
+  // updateDocking runs every game frame -- wait for isDocking to drop to false
+  {
+    const start = Date.now();
+    while (Date.now() - start < 3000) {
+      const still = await page.evaluate(() => window.__DB.isDocking);
+      if (!still) break;
+      await page.waitForTimeout(50);
+    }
+  }
+
+  await check('mid-dock invalidation: ore fully restored to ship', async () => {
+    const oreAfter = await getDB(page, () => window.__DB.ship.ore);
+    strictEqual(oreAfter, oreBeforeInvalid,
+      `ore should be ${oreBeforeInvalid} after safe-release, got ${oreAfter}`);
+  });
+
+  await check('mid-dock invalidation: reserved connector freed', async () => {
+    const connInfo = await page.evaluate(({ mod, conn }) => {
+      const m = window.__DB.shipAssembly[mod];
+      const c = m?.available_connectors.find(c => c.id === conn);
+      return c ? { free: c.free, state: c.state } : null;
+    }, slotSnapshot);
+    // null means module itself is gone -- no connector leak possible
+    if (connInfo !== null) {
+      strictEqual(connInfo.free,  true,   `connector.free should be true, got ${connInfo.free}`);
+      strictEqual(connInfo.state, 'free', `connector.state should be 'free', got ${connInfo.state}`);
+    }
+    ok(true, 'connector state safe');
+  });
+
+  await check('mid-dock invalidation: graph not mutated (shipAssembly[safePid] absent)', async () => {
+    const node = await page.evaluate((pid) => window.__DB.shipAssembly[pid] ?? null, safePid);
+    strictEqual(node, null, 'shipAssembly must not contain the invalidated pod');
+  });
+
+  await check('mid-dock invalidation: phase returns to IDLE', async () => {
+    const s = await getDB(page, () => window.__DB.dockingState);
+    strictEqual(s.phase, 'IDLE', `phase should be IDLE after invalidation, got ${s.phase}`);
+    strictEqual(await getDB(page, () => window.__DB.isDocking), false);
+  });
+
   await browser.close();
 
   console.log(`\n─────────────────────────────────────`);
