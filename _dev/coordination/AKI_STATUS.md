@@ -28,6 +28,86 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF:
 ```
 
+### DIRECTIVE ID: Dev-Environment QA Investigation — RESOLVED, CP3b-2 re-confirmed GOOD
+- STATUS: RESOLVED — environment issue fixed, CP3b-2 re-tested clean, closed as environment false-negative
+- BRANCH: agent/core-gameplay
+- COMMIT: a5d5ad4 (no code change — this entry documents the environment fix + re-verification of already-pushed CP3b-2 commit 0655257)
+- FILES CHANGED: none (diagnostics + retest only)
+- IMPLEMENTATION SUMMARY: Killed both stale port-8420 listeners on the user's machine (PID 21444, PID 13988 -- both plain `python -m http.server 8420`, one wildcard-bound, one localhost-only). Verified via netstat that port 8420 was fully clear afterward. Started exactly one fresh server from Documents/driftbound_work/agent-core (the intended test worktree) as a persistent background process, confirmed via netstat that only one PID is now bound, and confirmed via browser (window.__DB.attachedPodRenderSize reads ~126.13) that it is serving the current build. Separately inspected Documents/DRIFTBOUND (the 8/30 folder) per chief's instruction NOT to delete/consolidate yet: it is not git-controlled (no .git directory, so no branch/HEAD applies), it is stale relative to agent-core (index.html cache-bust tag one version behind, missing OWNERSHIP.md/START_GAME.bat/driftbound_flight_test.html.bak that agent-core has), and its src/ layout is a pre-refactor structure (assets/player/world subfolders) not matching the current modular src/. It does contain a handful of files not present anywhere in driftbound_work (_check.txt, _idx.txt, _inspect.txt, _keys.txt, _patch_blue.py, _test.txt, a 16MB "test blue map.html") -- read as scratch/debug artifacts, not yet confirmed disposable. No files touched, moved, or deleted in DRIFTBOUND. Full details logged in TEAM_NOTES.md. With the port conflict resolved, re-ran the full manual-style QA against the clean single server: docked at all 4 connector directions (N/E/S/W) -- pod substantial, flush, no gap, ship hull visible in every direction (screenshots taken, held locally). Ran the actual committed _dev/hover_targeting_verify.mjs suite against the clean server (not an ad-hoc script) for hover: 22/22 passed across all 5 zoom levels for world pod / attached pod / asteroid / empty-space hover, plus the two isolation checks (no second E consumer, hover not range-gated).
+- TEST RESULTS: hover_targeting_verify.mjs 22/22 PASS (run fresh against the clean server) | 4-direction docking visual retest: 4/4 correct (N/E/S/W, screenshots held locally, not committed)
+- RUNTIME READY: PASS -- single clean server confirmed on port 8420, serving current build
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: none
+- KNOWN WARNINGS: none new
+- BLOCKERS: none -- previous blocker (port conflict) resolved
+- BUGS DISCOVERED: none new this entry (both bugs from the prior entry -- port conflict, duplicate folders -- addressed/documented, not fully closed: DRIFTBOUND folder consolidation still pending chief's decision)
+- BAD NEWS / UNEXPECTED FINDINGS: none -- this entry is good news. The original "still broken" report is confirmed to have been an environment false-negative, not a CP3b-2 regression.
+- QUESTIONS FOR CHIEF: none blocking.
+- DECISIONS NEEDED FROM CHIEF: whether/when to archive Documents/DRIFTBOUND once the handful of unique scratch files in it (listed above, in TEAM_NOTES.md) are checked for anything worth keeping. Not urgent -- no active risk now that the port conflict is fixed and both agents/QA know to always confirm which folder a running server was started from.
+- RECOMMENDED NEXT ACTION: Close out the CP3b-2 QA cycle as GOOD/GO. Chief free to do a final manual pass on this same clean server (already running on port 8420 from driftbound_work/agent-core) to confirm firsthand before marking the directive fully closed.
+- CURRENT HOLD/GO STATE: GO -- CP3b-2 is confirmed correct in code and now confirmed correct in a clean, verified environment. Only the (non-blocking, non-urgent) DRIFTBOUND archival decision remains open.
+
+### DIRECTIVE ID: Dev-Environment QA Investigation (CP3b-2 retest blocked)
+- STATUS: BLOCKED — code confirmed correct, local dev environment issue preventing chief/user retest of CP3b-2
+- BRANCH: agent/core-gameplay
+- COMMIT: a5d5ad4 (no new code this entry — investigation only, verifying the already-pushed CP3b-2 commit 0655257)
+- FILES CHANGED: none (diagnostics only)
+- IMPLEMENTATION SUMMARY: User reported CP3b-2 (attached-pod scale fix, S=126.1) still appears broken in manual browser retest — pod still looked disconnected/small. Ran automated Playwright repro (_dev-adjacent script, not committed) docking at all 4 connector directions (N/E/S/W) directly against pushed commit a5d5ad4 served fresh from the correct folder (Documents/driftbound_work/agent-core). All 4 directions rendered correctly — pod substantial, flush, no gap, ship hull still visible. This confirms the pushed code itself is correct. User's browser environment was then checked: confirmed correct folder (Documents/driftbound_work/agent-core) and correct branch/commit (agent/core-gameplay @ a5d5ad4) via git log/git branch on the user's machine. User's browser console showed window.__DB.attachedPodRenderSize === undefined (should read ~126.13 on the correct build) even in a fresh Incognito window, which rules out normal cache. Ran netstat on the user's machine and found two separate processes simultaneously bound to port 8420: PID 21444 (listening on 0.0.0.0:8420 and [::]:8420, wildcard/all-interfaces) and PID 13988 (listening on 127.0.0.1:8420, localhost-only). Leading theory: one of these is a stale/leftover server process answering localhost:8420 ahead of the fresh server the user starts from the correct folder, silently serving old code with no error to signal it. Neither process has been killed yet, and it has not yet been confirmed which PID is actually answering the user's browser — this is the next step, pending chief/user go-ahead.
+- TEST RESULTS: Automated 4-direction repro (N/E/S/W) against pushed commit a5d5ad4 — all 4 visually correct (screenshots taken, not committed to repo, held locally). No regression suite changes — no code touched this entry.
+- RUNTIME READY: Pushed code confirmed runtime-ready via direct repro. User's live browser session currently NOT reflecting the pushed code — environment issue, not a code issue.
+- CONSOLE ERRORS: User's console shows window.__DB.attachedPodRenderSize === undefined, which is the smoking-gun signal that the browser is not running the current build.
+- KNOWN DELTAS: none in code.
+- KNOWN WARNINGS: none new.
+- BLOCKERS: Cannot get a clean chief/user visual retest of CP3b-2 until the local dev-server/process conflict on port 8420 is resolved on the user's machine.
+- BUGS DISCOVERED: (1) Two processes bound to port 8420 simultaneously on the user's machine (PIDs 21444, 13988) — one is very likely stale and silently serving an old build. (2) Two separate top-level Driftbound folders exist under Documents (DRIFTBOUND, created 8/30, and driftbound_work, created 8/31, containing agent-core/agent-world-ui/integration) — increases risk of exactly this kind of silent stale-serving confusion going forward.
+- BAD NEWS / UNEXPECTED FINDINGS: The CP3b-2 "still broken" report was a false alarm as far as the code is concerned — automated repro against the exact pushed commit passes cleanly on all 4 connector directions. The real issue is environmental (stale server process + duplicate project folders on disk), not a regression in the shipped fix.
+- QUESTIONS FOR CHIEF: None blocking — see decisions needed below.
+- DECISIONS NEEDED FROM CHIEF: (1) OK to kill both port-8420 processes on the user's machine and restart a single clean server from Documents/driftbound_work/agent-core to unblock retest? (2) Should the DRIFTBOUND (8/30) and driftbound_work (8/31) folders be analyzed, condensed, and organized into one canonical folder to prevent recurrence? Flagged in detail in TEAM_NOTES.md.
+- RECOMMENDED NEXT ACTION: Kill PIDs 21444 and 13988, start one fresh server from Documents/driftbound_work/agent-core, have user hard-retest CP3b-2 in a new Incognito window and re-check window.__DB.attachedPodRenderSize reads ~126.13. Separately, have DRIFTBOUND (8/30 folder) contents inspected and either archived/deleted or merged so only one canonical Driftbound folder remains on disk.
+- CURRENT HOLD/GO STATE: HOLD — CP3b-2 code itself is GO (pushed, verified correct via direct repro), but chief/user visual sign-off is blocked pending the environment cleanup above.
+
+
+### DIRECTIVE ID: CP3b-2 — Attached-pod render scale rework + mouse hover targeting
+- STATUS: COMPLETE — HOLD for chief review
+- BRANCH: agent/core-gameplay
+- COMMIT: 0655257
+- FILES CHANGED: src/main.js (attached-pod scale formula reworked; hover system added), src/systems/hover.js (new), _dev/cp3_attached_pod_render_verify.mjs (rewritten, 10/10), _dev/hover_targeting_verify.mjs (new, 22/22)
+- IMPLEMENTATION SUMMARY: Chief QA rejected the prior CP3 fix (S=96 via POD_DISPLAY_SIZE) as still too small/detached, and added a second requirement (mouse hover). Two independent fixes, one commit:
+
+  1. Attached-pod render scale. First attempt (not committed) matched the pod's real visible content half-extent 1:1 to the ship's own — computed S=151.8, but visually swallowed the ship (screenshot + pixel-probe confirmed only ~41% of the ship's own silhouette stayed visible). Reworked getAttachedPodRenderSize() to anchor on CONNECTOR_GAP (the CP2 graph constant, not a sprite pixel count) instead: setting the pod's own visible half-width equal to CONNECTOR_GAP makes the ship's remaining-visible-fraction along the connector axis collapse to exactly 0.5 algebraically, independent of the ship's own actual size. Result: S=126.1 -- substantially bigger than the old rejected 96 (reads as a full module), well short of the 151.8 that swallows the ship. Verified via screenshot (ship hull clearly visible, pod flush with zero gap) and pixel-probe scan (dynamic bounding-box + connector-edge measurement, not a single hardcoded pixel color).
+
+  2. Mouse hover targeting (new file src/systems/hover.js + main.js wiring). resolveHover(worldX, worldY, candidates) is a pure nearest-candidate hit test with zero side effects and zero dependency on main.js. getInteractionCandidates() builds the frame's candidate list from world pods, attached pods, and asteroids (shape documented as extensible for future InteractionTarget-compatible objects). updateHover() runs the full spec'd path every frame: mouse screen position -> camera.screenToWorld() -> world-space point -> resolveHover() -> hoveredTarget, gated by the existing interiorMode early-return in loop(). Hover and interaction range are fully decoupled -- hover has no range concept at all, it only answers "what is the cursor pointing at". Does not touch src/systems/interactions.js (confirmed still the sole E-key resolver) or src/core/camera.js (Orcha-owned, provides screenToWorld/worldToScreen unmodified).
+
+- TEST RESULTS: cp2_docking_verify 30/30, phase1_pod_assembly_verify 23/23, map_input_suppression_verify 18/18, cp3_attached_pod_render_verify 10/10 (rewritten -- now measures live bounding-box/connector-edge geometry instead of hardcoded pixel colors), hover_targeting_verify 22/22 (new -- world pod / attached pod / asteroid / empty-space hover at all 5 zoom levels, plus side-effect-free and no-range-gating checks). phase0_smoke and e_interaction_regression test [6] (pod-interior fade timing) both show a pre-existing flaky failure -- confirmed present on the unmodified baseline commit c224fc2 via git stash + 3x rerun before any of this session's changes were applied, so not a regression from this work.
+- RUNTIME READY: yes (flake noted above is baseline-pre-existing, unrelated to timing changes in this diff)
+- CONSOLE ERRORS: 0 across all test runs
+- KNOWN DELTAS: attached-pod visual scale is now a derived/measured value (126.1px draw size), not a fixed constant -- will shift automatically if CONNECTOR_GAP or the pod/ship sprite assets ever change, per design.
+- KNOWN WARNINGS: none new.
+- PUSHED TO GITHUB: yes -- agent/core-gameplay only (c224fc2..0655257)
+- QUESTIONS FOR CHIEF: none -- holding for review/GO.
+
+---
+
+### DIRECTIVE ID: CP3 — Attached-pod render fix (scale + z-order)
+- STATUS: COMPLETE — HOLD for chief review
+- BRANCH: agent/core-gameplay
+- COMMIT: 1cd7a04
+- FILES CHANGED: src/main.js (2 edits), _dev/cp3_attached_pod_render_verify.mjs (new, 6/6)
+- IMPLEMENTATION SUMMARY: Manual QA bug (Chief): docked pod rendered too small and offset beside/below the core instead of flush-mounted.
+  Root cause was purely render-side, not a docking/graph bug:
+  1. drawAttachedPods() used a stale hardcoded sprite size `const S = 52` instead of `POD_DISPLAY_SIZE` (96) used by every other pod render call site (world pods, in-flight docking animation) — pod rendered at ~54% correct scale.
+  2. drawAttachedPods(cx, cy) was called BEFORE drawShip(cx, cy, ...) in the render loop. Since CONNECTOR_GAP (46px) places the pod center inside the ship's own visible-sprite radius (~51px), the ship sprite painted over the pod on every frame, leaving only a small sliver visible (read by QA as "offset").
+  Fix (main.js only): S = 52 -> S = POD_DISPLAY_SIZE; moved drawAttachedPods(cx, cy) to run immediately after drawShip(cx, cy, now, speed) inside the same world-transform block.
+  CP2 docking logic and graph data (local_position, CONNECTOR_GAP, docking.js state machine) were NOT touched — the stored transform was already correct, confirmed by the new test's graph-sanity check. Per directive, docking.js changes were only authorized if the render fix proved the stored transform wrong; it did not, so docking.js is untouched.
+  Note on scope: main.js is nominally chief-approval-locked for orchestration changes, but this was a directly chief-commissioned bug-fix directive, so proceeding was in scope. drawAttachedPods/drawShip render pipeline is Aki/Core Gameplay ownership (ship graph/docking), not Orcha's HUD/map/minimap/BG/VFX modules — no Orcha-owned files touched.
+- TEST RESULTS: cp3_attached_pod_render_verify 6/6 (new) | cp2_docking_verify 30/30 | map_input_suppression_verify 18/18 | e_interaction_regression 25/25 | phase1_pod_assembly_verify 23/23 | phase0_smoke PASS
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: none — render-order/scale fix only, no behavior change to docking state machine or graph data
+- KNOWN WARNINGS: none
+- PUSHED TO GITHUB: agent/core-gameplay only (per directive)
+- QUESTIONS FOR CHIEF: none — awaiting review/GO on CP2-final + this CP3 render fix together
+
 ---
 
 ### DIRECTIVE ID: A2 / CP2-final — Safe release on mid-dock invalidation
@@ -121,3 +201,93 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF: None on record.
 
 Aki: please confirm/correct the above retroactive entry and use the template for all future checkpoints.
+
+## DIRECTIVE ID: CP3c (connector placement fix, following chief QA on CP3b-2)
+
+- STATUS: COMPLETE — HOLDING for chief review, per explicit directive
+- BRANCH: agent/core-gameplay
+- COMMIT: db96304
+- FILES CHANGED: src/main.js (getAttachedPodRenderSize refactor + 2 new functions + 3 call-site fixes + test bridge), src/systems/docking.js (1 additive field), _dev/cp3_attached_pod_render_verify.mjs (rewritten overlap-aware assertions), _dev/hover_targeting_verify.mjs (stale probe-point fix)
+- QA FINDING (chief, with screenshot): CP3b-2 fixed pod render SCALE correctly, but the attached pod renders overlapping/on top of the ship hull instead of flush outside it against the connector. Chief also correctly flagged the existing "zero gap" test as insufficient, since overlapping sprites also produce zero background gap — it cannot distinguish flush-placement from overlap.
+- ROOT CAUSE: CONNECTOR_GAP (46 world-px, CP2 graph constant used for local_position) is smaller than the ship's own measured visible half-width (~51 world-px). The OLD render code drew every attached pod at the raw graph local_position, which therefore sits INSIDE the ship's own silhouette by construction — this was actually documented as an intentional (but wrong) shortcut in the CP3b-2 code comments ("any pod...overlaps the ship. That overlap is what guarantees no floating gap").
+- IMPLEMENTATION SUMMARY: Fix is render-time ONLY, per directive ("fix connector placement math only"):
+  - `getAttachedPodRenderSize()` refactored (output UNCHANGED, S≈126.13, pod scale not touched) to expose `_shipHalfWidthWorld()` as a reusable memoized helper.
+  - New `getModuleRenderHalfWidth(modId)`: ship half-width for 'core', pod half-width (getAttachedPodRenderSize()/2) for any pod id.
+  - New `getNodeRenderOffset(nodeId)`: walks the existing shipAssembly parent chain, reuses the graph's CONNECTOR DIRECTION (never its distance), and substitutes distance = parentHalfWidth + thisHalfWidth (flush, zero unintended overlap) at every hop. Does NOT write to shipAssembly/local_position/CONNECTOR_GAP anywhere — CP2 graph/save data layer is completely untouched.
+  - `drawAttachedPods()` (both the strut-line loop and pod-body loop) and `getInteractionCandidates()`'s attached-pod hover position now use `getNodeRenderOffset()` instead of raw `node.local_position`.
+  - `drawDockingPod()`'s in-flight docking-animation target updated to use the same flush-distance formula, so the pod does not visually "pop" outward the instant LOCK commits (previously it animated toward the same overlapping point it would then render at).
+  - `docking.js` `getDockingAnimData()` gained one additive field, `slotModId: mod.pod_instance_id` — pure data exposure (the value already existed internally), zero change to the docking state machine's logic.
+  - Test bridge (`window.__DB`) gained 3 read-only getters (`shipHalfWidthWorld`, `getNodeRenderOffset`, `getModuleRenderHalfWidth`) for test-harness use.
+- TEST CHANGES (per chief's explicit request): `cp3_attached_pod_render_verify.mjs` rewritten. New core assertion measures ship-only content bounding box (pod temporarily spliced out of `attachedPods`, re-added after) vs pod-leading-edge bounding box independently, and asserts they do not overlap beyond a 4px intentional-art tolerance — in addition to (not replacing) the existing flush/no-gap check. `hover_targeting_verify.mjs` had one stale hardcoded probe point (`shipPos.x + 46`, the old raw CONNECTOR_GAP) that no longer lands on the pod now that it renders further out; fixed to query `getNodeRenderOffset()` dynamically.
+- TEST RESULTS: cp3_attached_pod_render_verify.mjs 12/12 PASS | cp2_docking_verify.mjs 30/30 PASS | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS | hover_targeting_verify.mjs 22/22 PASS — 130/130 total, 0 regressions.
+- VISUAL VERIFICATION: All 4 connector directions (N/E/S/W) re-tested with fresh screenshots — pod sits cleanly outside the hull, flush against the connector strut, zero sprite overlap, on every side.
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: None
+- KNOWN WARNINGS: `drawDockingPod()`'s in-flight sprite still renders at the older `POD_DISPLAY_SIZE` (96) constant rather than `getAttachedPodRenderSize()` (~126) during the docking animation itself — this is a pre-existing discrepancy (not introduced by this fix) between the in-flight animation sprite size and the final attached sprite size. Out of scope for this directive (chief's instruction was placement math only, and this is a size mismatch, not a placement bug), flagging for chief's awareness/backlog.
+- BUGS DISCOVERED: None new. The insufficient old test (chief-flagged) has been rewritten as directed.
+- BLOCKERS: None.
+- QUESTIONS FOR CHIEF: None blocking. One backlog flag above (docking-animation sprite size mismatch) for chief's discretion on priority.
+- PUSHED TO GITHUB: YES — agent/core-gameplay, commit db96304
+- HOLD STATE: HOLDING. Per explicit directive, no further work will proceed on this branch until chief reviews.
+
+## DIRECTIVE ID: CP3d (per-axis hull extent — connector placement re-derivation)
+
+- STATUS: COMPLETE — HOLDING for chief review, per standing directive
+- BRANCH: agent/core-gameplay
+- COMMIT: (pending, see below)
+- FILES CHANGED: src/main.js (contentBBox extended, new ship-hull-extent measurement, connector math rewired), _dev/cp3_attached_pod_render_verify.mjs (bridge property rename fix)
+- TRIGGER: User disputed CP3c's fix with a live screenshot showing the pod still overlapping the hull. Investigation confirmed the disputed screenshot matched OLD pre-fix behavior (very likely stale cached JS in that browser tab — advised full tab close/reopen). Independently, the user also gave a direct instruction to make the fix more physically correct rather than relying on my own re-assertion: measure the ship's real sprite width, store it on the player, and use it (not a guessed constant) to place pods flush against whichever side (N/E/S/W) they connect to, and confirm it still rotates correctly.
+- ROOT CAUSE (of the approximation, not a functional bug): CP3c used ONE scalar ("ship half-width") for every connector face, measured from the SOUTH-facing sprite's content width. The ship's 8 directional sprites are independently rendered art (not pixel-rotations of one source image) — measured directly: north/south sprite content bbox is ~51x49px, east/west sprite content bbox is ~53x27px. A single scalar from one direction is an approximation that happens to be close for this particular art (~48-51px each way) but is not a real per-axis measurement, and doesn't hold in general.
+- IMPLEMENTATION SUMMARY:
+  - `_contentBBox()` extended to also return `minX/minY/maxX/maxY` (not just width/height) — additive, no existing caller broken.
+  - New `_shipHullExtentWorld()`: measures the ship's real reach in each of the 4 cardinal directions (north/south/east/west) independently, from `rotations['north']` — the one sprite where ship-local axes align 1:1 with image axes at zero rotation (HEADING_ANGLE.north === 0). Extents are measured from the sprite's own nominal center (imgW/2, imgH/2) — the exact point `ctx.drawImage()` aligns to the ship's world position in `drawShip()` — confirming ship-sprite-origin and player-world-position share the same anchor point (checked directly; sub-2px content-centering skew on north/south, ~4px on east/west, both well within visual tolerance).
+  - Result stored on the player object itself: `ship.hullHalfExtent = { north, south, east, west }` (world px), not just a private module cache, per directive.
+  - `getModuleRenderHalfWidth(modId)` replaced with `getModuleFaceExtent(modId, dirKey)` — for the ship core, returns the real per-axis extent in the requested direction; for pods, still a symmetric scalar (pod art has no directional variants yet — single sprite reused at every facing).
+  - `getNodeRenderOffset()` now picks the correct face on each side of a joint (parent's face toward the child + child's face toward the parent, using `OPPOSITE_DIR`) instead of an averaged/symmetric guess — still only borrows the graph's connector DIRECTION, never writes to `shipAssembly`/`local_position`/`CONNECTOR_GAP`.
+  - `drawDockingPod()`'s in-flight target and the test bridge (`window.__DB`) updated to the new function names/shapes (`shipHullHalfExtent`, `getModuleFaceExtent`).
+  - Rotation: unaffected — `rotLocal()` by `shipHeadingAngle()` is applied identically to the (now more accurate) offset vector; verified live (see TEST RESULTS).
+- MEASURED VALUES (live, via test bridge): `ship.hullHalfExtent = { north: 50, south: 46, east: 50, west: 50 }` world-px — close to CP3c's old blanket 51px estimate (confirms the earlier approximation was reasonable for THIS ship art, but is now a real per-axis measurement rather than a guess, and will correctly diverge for future asymmetric ship/module art).
+- TEST RESULTS: cp3_attached_pod_render_verify.mjs 12/12 PASS | cp2_docking_verify.mjs 30/30 PASS | map_input_suppression_verify.mjs 18/18 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | hover_targeting_verify.mjs 22/22 PASS. e_interaction_regression.mjs and phase0_smoke.mjs each show 2-3 flaky failures (interior-fade timing, boost-flag) that reproduce identically on this branch's UNCHANGED code paths and are traced to host CPU load during the test run (observed rAF/500ms dropping to ~12-14fps), not to this change — flagged as pre-existing environmental flakiness, not a regression.
+- RUNTIME READY: PASS. CONSOLE ERRORS: 0.
+- KNOWN WARNINGS: pod scale (getAttachedPodRenderSize) still uses an averaged scalar across all 4 axes rather than a directional one — intentional, pods have no directional art yet. drawDockingPod() in-flight sprite size mismatch flagged in CP3c is still open/out of scope.
+- USER'S DISPUTED SCREENSHOT: strongly matches pre-CP3c overlap behavior (pod bottom edge directly overlapping ship's sensor dome, no strut/gap) rather than either CP3c's or CP3d's flush-with-strut rendering. Most likely stale cached JS in that browser tab. Asked user to fully close/reopen the tab and re-screenshot to confirm.
+- BLOCKERS: None.
+- PUSHED TO GITHUB: pending (see next commit)
+- HOLD STATE: HOLDING for chief/user review.
+
+
+## DIRECTIVE ID: CP3e (multi-pod chain connector continuity)
+
+- STATUS: COMPLETE — HOLDING for chief visual review, per explicit directive
+- BRANCH: agent/core-gameplay
+- COMMIT: 9d62022
+- BASELINE: agent/core-gameplay @ aca2261 (CP3d)
+- FILES CHANGED: src/main.js (new `_connectorAxisKeys()`, new `_podHullExtentWorld()`, `getModuleFaceExtent()` pod branch rewritten, `getNodeRenderOffset()` rewired to shared axis-key helper, `drawAttachedPods()` strut-drawing loop rewritten to edge-to-edge, `drawDockingPod()` in-flight target updated, test bridge additions), _dev/cp3_attached_pod_render_verify.mjs (one stale pre-CP3e assertion updated to use the new per-axis pod extent instead of a blanket S/2 — see BUGS DISCOVERED), _dev/cp3e_chain_render_verify.mjs (new, 25 assertions)
+- QA EVIDENCE (chief screenshot, 2026-08-31): north-side chain of two pods — lower pod separated from the ship by an excessive exposed line, upper pod floating with a large empty gap and no visible connector/strut.
+- ROOT CAUSE: `getModuleFaceExtent()` (introduced in CP3d for the ship) used one blanket `S/2` (half the pod's nominal SQUARE canvas draw size, including transparent padding, S≈126) as a pod's face extent in EVERY direction. The pod sprite's real visible bounds are asymmetric per axis (measured: north≈38, south≈35, east≈44, west≈47 world-px — none close to the blanket ≈63). This overestimate is exactly what produced the reported floating/excessive-gap symptom, and it specifically affects pod→pod edges — core→pod edges happened to look closer to correct only because CONNECTOR_GAP was originally tuned by construction against the pod's east/west half-width, never checked against its north/south half-height or against a second pod's own extent.
+- IMPLEMENTATION SUMMARY:
+  - New `_podHullExtentWorld()`: measures the pod's real per-axis visible half-extents (north/south/east/west), the same technique CP3d used for the ship (`_shipHullExtentWorld()`) — from the pod's own content bounding box relative to its sprite's nominal center, scaled by the existing `getAttachedPodRenderSize()` factor. Pod SCALE itself is untouched (per directive's DO NOT TOUCH).
+  - `getModuleFaceExtent(modId, dirKey)`: pod branch now calls `_podHullExtentWorld()` instead of returning the blanket scalar (falls back to the old scalar only if the pod sprite isn't loaded yet).
+  - New `_connectorAxisKeys(node, parent)`: single shared helper computing which face of the parent points at the child and which face of the child points back at the parent, from the graph's raw `local_position` deltas. Used identically by `getNodeRenderOffset()` (placement) and the strut-drawing loop in `drawAttachedPods()` (visuals) — per directive's "one authoritative computed transform" requirement, these two call sites can no longer independently disagree about which face is presenting on either side of a joint.
+  - `drawAttachedPods()`'s strut-drawing loop rewritten: struts now span from the parent's real visible face edge to the child's real visible face edge (computed via the unit vector between rotated centers, offset inward by each side's own `getModuleFaceExtent()`), instead of the old center-to-center line. A strut can therefore never terminate inside a sprite or extend through one, and mathematically renders exactly the true gap — zero-length/invisible when perfectly flush (verified: with the flush placement formula, parentExtent + childExtent == the full segment length by construction, so ex1 == ex2 exactly at every correctly-flush edge).
+  - `drawDockingPod()`'s in-flight `flushDist` target updated to use `getModuleFaceExtent('_pending_pod_', OPPOSITE_DIR[anim.slotConnDir])` for the incoming pod's own extent, instead of the old blanket scalar — keeps the docking animation's target consistent with where the pod will actually render post-LOCK (directive's "docking completion must not visibly jump" requirement).
+  - Test bridge (`window.__DB`) gained `podHullHalfExtent` (mirrors CP3d's `shipHullHalfExtent`).
+  - Graph topology, saved `local_position`, connector state, docking state machine, resource costs, mass, and pod SCALE are all untouched — this is render/interaction-coordinate math only, confirmed via `git diff --stat` (only src/main.js + test files touched).
+- VISUAL VERIFICATION: 2-pod chains screenshotted in all 4 directions (N/E/S/W) at zoom=1.00 — every chain (core→pod1→pod2) reads as flush and continuous, no floating gap, no overlap, correct rotation for the ship's heading in each case.
+- TEST RESULTS:
+  - cp3e_chain_render_verify.mjs (NEW): 25/25 PASS — covers core→pod1 and pod1→pod2 edges independently at N/E/S/W (graph parent-chain + offset-formula consistency), full independent pixel-bbox overlap/gap check at both edges of an E-direction chain, hover-hit-position-matches-render for both chained pods, and docking-completion-no-jump (both a frame-to-frame stability check and a check that the post-LOCK settled position matches the same flush formula used for the in-flight animation target).
+  - cp3_attached_pod_render_verify.mjs: 12/12 PASS (see BUGS DISCOVERED — one assertion's own expectation formula needed updating for this fix, not a code regression).
+  - cp2_docking_verify.mjs: 30/30 PASS. map_input_suppression_verify.mjs: 18/18 PASS. phase1_pod_assembly_verify.mjs: 23/23 PASS. hover_targeting_verify.mjs: 22/22 PASS. phase0_smoke.mjs: PASS, 0 console errors.
+  - e_interaction_regression.mjs: 23/25 PASS — 2 failures, both the known interior-fade-timing flake (`fade` stuck at 0.96 against a fixed 1200ms wall-clock wait). Rerun in isolation per directive: reproduced identically (same fade=0.96 both times). `git diff --stat` on this branch confirms zero lines touched in any interior/fade code path this checkpoint (only src/main.js's pod-extent/connector-axis/strut/docking-target functions, none overlapping interior mode). Host was independently confirmed under heavy concurrent CPU load during this test run (Orcha teammate process + several browser/Slack/Python processes each showing multiple CPU-seconds). Classified as environmental, not a CP3e regression — flagging per directive's explicit instruction rather than silently omitting.
+- RUNTIME/CONSOLE STATUS: PASS, 0 console errors across all test runs and the manual chain screenshots.
+- KNOWN DELTAS: None from the directive's requirements.
+- KNOWN WARNINGS: Pod hover hit-radius (`getAttachedPodRenderSize()/2`, a circle) is still a blanket scalar, not per-axis like the new render/strut extent — this is a pre-existing (not CP3e-introduced) simplification of the hit-test shape, out of scope for this directive (hover-hit-matches-render was verified and passes; the hit-test circle is simply larger/rounder than the sprite's exact silhouette, same as before CP3e). `drawDockingPod()`'s in-flight sprite still renders at the older POD_DISPLAY_SIZE constant rather than getAttachedPodRenderSize() during the animation itself (flagged originally in CP3c, still open, still out of scope — a size mismatch during animation only, not a placement bug).
+- BLOCKERS: None.
+- BUGS DISCOVERED: `cp3_attached_pod_render_verify.mjs` (from CP3c/CP3d) had one assertion hardcoding the pod's own extent as a blanket `S/2`, which was correct only because `getModuleFaceExtent()` itself used that same blanket value for pods before this fix. Once `getModuleFaceExtent()` was corrected to the real per-axis measurement, that assertion's own expectation went stale (it was asserting the OLD incorrect formula) and failed on first re-run. Fixed by updating the assertion to call `getModuleFaceExtent(pid, 'west')` (the pod's real near-face extent for an E connector) instead of `S/2` — this is a test-file correction only, not a production-code change, and is explicitly within this directive's ownership ("dedicated CP3 connector/hover regression tests").
+- BAD NEWS / UNEXPECTED FINDINGS: The pod's real per-axis extents are meaningfully asymmetric (measured: north≈38, south≈35, east≈44, west≈47 world-px) — nearly a 25% spread between the smallest and largest axis. Any future pod art changes, or any second pod TYPE with different art, will need this same per-axis treatment; a single averaged/blanket value will reproduce this exact class of bug. Left a comment in `_podHullExtentWorld()` flagging this for when directional/per-type pod art is eventually added.
+- QUESTIONS FOR CHIEF: NONE
+- DECISIONS NEEDED FROM CHIEF: NONE
+- RECOMMENDED NEXT ACTION: Chief visual review of the 2-pod-chain screenshots (all 4 directions) and the new cp3e_chain_render_verify.mjs assertions; if approved, this checkpoint is ready for the next Integration Pass onto refactor/modular-core (Aki will not self-integrate).
+- PUSHED TO GITHUB: YES — agent/core-gameplay, commit 9d62022
+- CURRENT HOLD/GO STATE: HOLDING. No further directive will be started on this branch until chief reviews.

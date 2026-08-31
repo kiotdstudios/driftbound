@@ -19,6 +19,7 @@ import {
 } from './core/camera.js';
 import { initInteractions, resolveInteractions } from './systems/interactions.js';
 import { initDocking, isDocking, getDockingState, getDockingAnimData, startDocking, abortDocking, updateDocking, DOCK_STATE } from './systems/docking.js';
+import { resolveHover } from './systems/hover.js';
 
 
 
@@ -225,7 +226,227 @@ const POD_SPRITE_BASE  = 'modular_space_pod/';
 const POD_ANIM_KEY     = '8-frame_spaceship_flying_animation._Keep_the_ship';
 const POD_ATTACH_RANGE = 120;   // world-px — proximity to trigger attach prompt
 const POD_ATTACH_COST  = 10;    // Nebulite ore required to claim a pod
-const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship)
+const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship) -- world pods & in-flight docking anim only
+
+// -- CP3b: attached-pod render scale, derived from real sprite geometry -----
+// A docked module must read as "same scale language" as the core ship, not
+// a fixed nominal canvas size. Different source PNGs carry different amounts
+// of transparent padding (the ship's own 68px sprite vs the pod's 85px
+// sprite), so matching nominal sizes (or POD_DISPLAY_SIZE) does not make the
+// two sprites' *visible* content match. Instead we measure each sprite's
+// actual non-transparent content bounding box once (memoized) and scale the
+// pod so its visible content half-extent matches the ship's, in world px.
+// This is the ONLY lever available for the attached-pod render fix -- the
+// connector offset itself (CONNECTOR_GAP / local_position, CP2 graph data)
+// is untouched.
+let _attachedPodRenderSize = null; // memoized S (canvas draw size, px) once both sprites are ready
+
+function _contentBBox(img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) return null;
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const octx = off.getContext('2d');
+  octx.drawImage(img, 0, 0);
+  let data;
+  try { data = octx.getImageData(0, 0, w, h).data; } catch (e) { return null; } // tainted canvas safety
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 10) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { width: maxX - minX + 1, height: maxY - minY + 1, minX, minY, maxX, maxY };
+}
+
+// Returns the canvas draw size (S, px) for attached-pod sprites.
+//
+// CP3b-2 (chief rejected the first fix -- matching pod/ship content
+// half-extent 1:1 overlaps so much it swallows the ship, ~41% of the ship's
+// own silhouette left visible). This version derives the pod size from
+// CONNECTOR_GAP itself (a measured CP2 graph constant, not a sprite pixel
+// count), which is the only anchor that is meaningful regardless of which
+// sprite art is loaded:
+//
+// CONNECTOR_GAP (46 world-px) is smaller than the ship's own visible
+// half-width in world-px (~51, measured below), so the docking point sits
+// INSIDE the ship's own silhouette -- any pod, at any size, therefore
+// overlaps the ship. That overlap is what guarantees "no floating gap"
+// (near edge = CONNECTOR_GAP - podHalfWidth is always < CONNECTOR_GAP <
+// shipHalfWidthWorld). Along the connector axis, the fraction of the
+// ship's own silhouette width that remains visible works out to:
+//
+//   visibleFraction = (shipHalfWidthWorld + CONNECTOR_GAP - podHalfWidthWorld)
+//                      / (2 * shipHalfWidthWorld)
+//
+// Setting podHalfWidthWorld = CONNECTOR_GAP makes this collapse to exactly
+// 0.5 -- independent of the ship's own actual size. That is the largest a
+// pod can be while still guaranteeing the ship's hull remains the dominant
+// (>=50%) visible shape: substantially bigger than the old
+// POD_DISPLAY_SIZE=96 (which read as ~60% ship-visible / a tiny accessory),
+// without swallowing the ship the way a naive 1:1 content-size match does
+// (~41% ship-visible). Falls back to POD_DISPLAY_SIZE if sprites aren't
+// loaded yet, or if the ship/pod geometry doesn't fit the assumption above.
+function getAttachedPodRenderSize() {
+  if (_attachedPodRenderSize != null) return _attachedPodRenderSize;
+  const _hullExt = _shipHullExtentWorld();
+  const shipHalfWidthWorld = _hullExt ? (_hullExt.north + _hullExt.south + _hullExt.east + _hullExt.west) / 4 : null;
+  const podImg = podRotations['south'];
+  if (shipHalfWidthWorld == null || !podImg || !podImg.naturalWidth) return POD_DISPLAY_SIZE;
+
+  const podBBox = _contentBBox(podImg);
+  if (!podBBox || podBBox.width <= 0) return POD_DISPLAY_SIZE;
+
+  // Sanity-check the assumption the formula relies on (connector point
+  // inside ship silhouette); if it doesn't hold for future sprite swaps,
+  // fall back rather than produce a nonsensical size.
+  if (shipHalfWidthWorld <= 0 || CONNECTOR_GAP <= 0 || CONNECTOR_GAP >= shipHalfWidthWorld * 2) {
+    return POD_DISPLAY_SIZE;
+  }
+
+  const podHalfWidthWorld = CONNECTOR_GAP;
+  const podScale = (podHalfWidthWorld * 2) / podBBox.width;
+  _attachedPodRenderSize = podImg.naturalWidth * podScale;
+  return _attachedPodRenderSize;
+}
+
+// Memoized measurement of the ship's own visible sprite half-width, in
+// world-px. Split out of getAttachedPodRenderSize() (CP3b-2) so the SAME
+// scale formula/output is reused, unchanged, by the connector-placement fix
+// below (CP3c) -- this function changes NO pod scale, it only exposes a
+// value that already existed inline.
+// -- CP3d: real per-axis hull extents (not one symmetric scalar) ------------
+// CP3c fixed overlap using a single "half width" scalar (from the SOUTH
+// sprite's content width) applied to every connector face alike. That is
+// only an approximation: the ship's 8 directional sprites are independently
+// rendered art, not pixel-rotations of one image, so the hull's true extent
+// toward the front/back can differ from its extent toward the sides.
+//
+// Fix: measure the ship's REAL per-axis reach (north/south/east/west, each
+// independently) from the one sprite where ship-local axes line up 1:1 with
+// image axes with zero rotation applied -- that's rotations['north'], since
+// HEADING_ANGLE.north === 0 (see shipHeadingAngle()/rotLocal() above: every
+// other heading is this same sprite's local-frame offsets, rotated). Extents
+// are measured from the sprite's own nominal center (imgW/2, imgH/2) -- the
+// exact point ctx.drawImage() aligns to the ship's world position in
+// drawShip() -- not from the content bbox's own (possibly off-center) middle,
+// so a connector's flush distance also correctly reflects any east/west vs.
+// north/south content-centering skew already present in the source art.
+// Stored on `ship` itself (ship.hullHalfExtent) per directive -- not just a
+// private module cache -- so it's inspectable/reusable as ship state.
+let _shipHullExtentCache = null;
+function _shipHullExtentWorld() {
+  if (_shipHullExtentCache) return _shipHullExtentCache;
+  const shipImg = rotations['north'];
+  if (!shipImg || !shipImg.naturalWidth) return null;
+  const bbox = _contentBBox(shipImg);
+  if (!bbox) return null;
+  const imgCX = shipImg.naturalWidth / 2, imgCY = shipImg.naturalHeight / 2;
+  _shipHullExtentCache = {
+    north: (imgCY - bbox.minY) * DISPLAY_SCALE,
+    south: (bbox.maxY - imgCY) * DISPLAY_SCALE,
+    east:  (bbox.maxX - imgCX) * DISPLAY_SCALE,
+    west:  (imgCX - bbox.minX) * DISPLAY_SCALE,
+  };
+  ship.hullHalfExtent = _shipHullExtentCache; // store on the player, per directive
+  return _shipHullExtentCache;
+}
+
+// -- CP3c/d: connector-placement fix -----------------------------------------
+// The connector point itself (CONNECTOR_GAP, CP2 graph data) sits INSIDE the
+// ship's own silhouette by construction, so anything drawn at the raw graph
+// local_position necessarily overlaps. Fix is render-time ONLY:
+// getNodeRenderOffset() walks the same shipAssembly parent chain the graph
+// already encodes, borrows the graph's CONNECTOR DIRECTION (never its
+// distance), and substitutes a flush distance of (parent's face extent
+// toward the child) + (child's face extent toward the parent) at every hop.
+// shipAssembly, local_position and CONNECTOR_GAP itself are never written to
+// -- the CP2 structural/save layer is untouched. Pod scale
+// (getAttachedPodRenderSize) is also untouched.
+//
+// dirKey is one of 'north'|'south'|'east'|'west' -- the direction FROM modId
+// TOWARD the neighbor whose distance we're computing (i.e. which face of
+// modId is presenting). The ship core now answers with its real per-axis
+// extent (CP3d); pods stay a symmetric scalar since pod art has no
+// directional variants yet (single sprite, reused at every facing) -- ready
+// to swap in a per-direction lookup here too if that ever changes.
+function getModuleFaceExtent(modId, dirKey) {
+  if (!modId || modId === 'core') {
+    const ext = _shipHullExtentWorld();
+    if (ext && dirKey in ext) return ext[dirKey];
+    return POD_DISPLAY_SIZE / 2;
+  }
+  // CP3e: pod content bbox is NOT square (62w x 50h before scale) -- use the
+  // real per-axis measurement, not a blanket S/2 (half the square canvas
+  // draw size, including transparent padding), which overestimated every
+  // pod face and produced the chief-reported floating/excessive-gap chains.
+  // NOTE: only one pod TYPE exists today; if per-type/directional pod art
+  // is ever added, this must look up modId's own type's measurement.
+  const ext = _podHullExtentWorld();
+  if (ext && dirKey in ext) return ext[dirKey];
+  return getAttachedPodRenderSize() / 2; // fallback before pod sprite is loaded
+}
+
+// CP3e: shared single source of truth for which face of the parent points
+// at the child, and which face of the child points back at the parent --
+// used identically by placement (getNodeRenderOffset) and strut endpoints,
+// so neither can independently drift from the other.
+function _connectorAxisKeys(node, parent) {
+  const dx = node.local_position.x - parent.local_position.x;
+  const dy = node.local_position.y - parent.local_position.y;
+  const towardChildKey = dy < 0 ? 'north' : dy > 0 ? 'south' : (dx > 0 ? 'east' : 'west');
+  return { towardChildKey, towardParentKey: OPPOSITE_DIR[towardChildKey] };
+}
+
+// CP3e: real per-axis pod hull extent, measured the same way as the ship's
+// (CP3d) -- from the pod's own content bbox relative to its sprite's
+// nominal center (the point ctx.drawImage() aligns to the connector-offset
+// position), scaled by the SAME factor getAttachedPodRenderSize() already
+// derives (pod SCALE itself is untouched, per directive).
+let _podHullExtentCache = null;
+function _podHullExtentWorld() {
+  if (_podHullExtentCache) return _podHullExtentCache;
+  const podImg = podRotations['south'];
+  const S = getAttachedPodRenderSize();
+  if (!podImg || !podImg.naturalWidth || !S) return null;
+  const bbox = _contentBBox(podImg);
+  if (!bbox) return null;
+  const scale = S / podImg.naturalWidth;
+  const imgCX = podImg.naturalWidth / 2, imgCY = podImg.naturalHeight / 2;
+  _podHullExtentCache = {
+    north: (imgCY - bbox.minY) * scale,
+    south: (bbox.maxY - imgCY) * scale,
+    east:  (bbox.maxX - imgCX) * scale,
+    west:  (imgCX - bbox.minX) * scale,
+  };
+  return _podHullExtentCache;
+}
+
+function getNodeRenderOffset(nodeId) {
+  if (!nodeId || nodeId === 'core') return { x: 0, y: 0 };
+  const node = shipAssembly[nodeId];
+  if (!node) return { x: 0, y: 0 };
+  const parentId = node.parent || 'core';
+  const parent = shipAssembly[parentId] || shipAssembly.core;
+  const parentOffset = getNodeRenderOffset(parentId);
+  const dx = node.local_position.x - parent.local_position.x;
+  const dy = node.local_position.y - parent.local_position.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const dirX = dx / dist, dirY = dy / dist;
+  // CP3e: axis-key selection now lives in one shared helper (_connectorAxisKeys)
+  // so strut endpoints (drawAttachedPods) can never independently disagree
+  // with this placement about which face is presenting on either side.
+  const { towardChildKey, towardParentKey } = _connectorAxisKeys(node, parent);
+  const flushDist = getModuleFaceExtent(parentId, towardChildKey) + getModuleFaceExtent(nodeId, towardParentKey);
+  return { x: parentOffset.x + dirX * flushDist, y: parentOffset.y + dirY * flushDist };
+}
+
 
 // Pod definitions — add more types here later
 const POD_TYPES = {
@@ -589,7 +810,7 @@ const DEV_MODE = true;
 // All developer shortcuts live here — one definition per command.
 // Execution function fires only when DEV_MODE is true and no text input has focus.
 // Keys: Slash=FullFuel, KeyH=FullHull, KeyO=FullOxygen(stub),
-//       KeyR=TestResources, KeyP=SpawnTestPod
+//       KeyG=TestResources, KeyP=SpawnTestPod
 const DEV_COMMANDS = {
   Slash: {
     key: 'Slash', label: '/ — Full Fuel',
@@ -615,8 +836,8 @@ const DEV_COMMANDS = {
       DevLog.info('DevCheat', 'DEV CHEAT: Oxygen stub triggered (no-op)');
     },
   },
-  KeyR: {
-    key: 'KeyR', label: 'R — Give Test Resources',
+  KeyG: {
+    key: 'KeyG', label: 'G — Give Test Resources',
     exec() {
       ship.ore          += 25;
       ship.mineral      += 10;
@@ -1463,6 +1684,72 @@ function drawAsteroids(cx, cy) {
 }
 // ─── DRAW ORE PICKUPS ────────────────────────────────────────────────────────
 
+// ─── MOUSE HOVER TARGETING ───────────────────────────────────────────────────
+// mouse screen pos -> camera.screenToWorld() -> world-space point -> hit-test
+// InteractionTarget candidates (world pods, attached pods, asteroids, future
+// types) -> hoveredTarget. Pure cursor readout: NEVER gates or duplicates the
+// E-key resolver in src/systems/interactions.js. Range (whether E can act)
+// stays wherever it already lives (POD_ATTACH_RANGE / MINE_RANGE checks) --
+// hover only answers "what is the cursor pointing at", independent of zoom.
+let hoveredTarget = null; // { type, id, worldX, worldY, hitRadius, ref } | null
+
+// Builds the current frame's InteractionTarget candidate list from every
+// hoverable object family. New object types (turrets, wrecks, NPCs, ...)
+// plug in here with the same shape -- resolveHover() itself never changes.
+function getInteractionCandidates() {
+  const candidates = [];
+  const a = shipHeadingAngle();
+
+  const _dockPid = isDocking() ? getDockingState().pod_instance_id : null;
+  for (const pod of worldPods) {
+    if (_dockPid && pod.pid === _dockPid) continue; // being animated in -- not a hover target
+    candidates.push({
+      type: 'world_pod', id: pod.pid,
+      worldX: pod.worldX, worldY: pod.worldY,
+      hitRadius: 60, // matches the beacon ring drawn in drawWorldPods (52 + pulse*8)
+      ref: pod,
+    });
+  }
+
+  for (const p of attachedPods) {
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
+    if (!node) continue;
+    // CP3c: hover target must track the flush render position, not the raw
+    // (inside-hull) graph local_position -- see getNodeRenderOffset().
+    const cOff = getNodeRenderOffset(modId);
+    const cp = rotLocal(cOff.x, cOff.y, a);
+    candidates.push({
+      type: 'attached_pod', id: modId,
+      worldX: ship.worldX + cp.x, worldY: ship.worldY + cp.y,
+      hitRadius: getAttachedPodRenderSize() / 2, // matches the CP3b visual scale fix
+      ref: p,
+    });
+  }
+
+  for (const ast of getAsteroids()) {
+    const t = ast.type || {};
+    const r = (Math.max(t.w || 40, t.h || 40) * (t.scale || 2)) / 2;
+    candidates.push({
+      type: 'asteroid', id: ast.id != null ? ast.id : ast,
+      worldX: ast.worldX, worldY: ast.worldY,
+      hitRadius: r,
+      ref: ast,
+    });
+  }
+
+  return candidates;
+}
+
+// Called once per frame (flight mode only -- interiorMode returns early in
+// loop() before this point is ever reached). Independent of interaction
+// range: this only determines what's under the cursor, in world space, at
+// the camera's current zoom -- screenToWorld() already accounts for zoom.
+function updateHover() {
+  const mp = getMousePosition();
+  const world = screenToWorld(mp.x, mp.y);
+  hoveredTarget = resolveHover(world.x, world.y, getInteractionCandidates());
+}
 // ─── DRAW WORLD PODS ─────────────────────────────────────────────────────────
 
 function drawWorldPods(cx, cy) {
@@ -1579,10 +1866,18 @@ function drawDockingPod(cx, cy) {
   // slotModLocalX/Y are fresh lookups from the assembly at time of getDockingAnimData() call.
   const lx     = anim.slotModLocalX;
   const ly     = anim.slotModLocalY;
-  // Add one connector-gap step in the slot direction so pod ends at child center
   const dv     = DIR_VEC[anim.slotConnDir] || { x: 0, y: 1 };
-  const clx    = lx + dv.x * CONNECTOR_GAP;
-  const cly    = ly + dv.y * CONNECTOR_GAP;
+  // CP3c: target the same flush edge-to-edge distance the pod will actually
+  // render at once attached (getNodeRenderOffset()), not the raw
+  // CONNECTOR_GAP graph step -- otherwise the pod would animate INTO the
+  // hull, then visually "pop" outward the instant LOCK commits.
+  // CP3e: incoming pod's own face extent (toward the parent) now uses the
+  // same real pod-hull measurement as the attached-state render/strut math,
+  // not a blanket S/2 -- keeps the docking target authoritative and
+  // consistent with where the pod will actually render once LOCK commits.
+  const flushDist = getModuleFaceExtent(anim.slotModId, anim.slotConnDir) + getModuleFaceExtent('_pending_pod_', OPPOSITE_DIR[anim.slotConnDir]);
+  const clx    = lx + dv.x * flushDist;
+  const cly    = ly + dv.y * flushDist;
   const tWorldX = ship.worldX + (clx * cos_a - cly * sin_a);
   const tWorldY = ship.worldY + (clx * sin_a + cly * cos_a);
 
@@ -1734,30 +2029,53 @@ function drawAttachedPods(cx, cy) {
 
   // ── mechanical struts (parent -> child), drawn behind the pods ──
   for (const p of attachedPods) {
-    const node = shipAssembly[p.mod_id || p.pid];
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
     if (!node) continue;
-    const parent = shipAssembly[node.parent] || shipAssembly.core;
-    const cp = rotLocal(node.local_position.x, node.local_position.y, a);
-    const pp = rotLocal(parent.local_position.x, parent.local_position.y, a);
+    const parentId = node.parent || 'core';
+    const parent = shipAssembly[parentId] || shipAssembly.core;
+    // CP3c/e: flush render offset (direction from graph, distance recomputed)
+    // -- NOT the raw local_position, which sits inside the parent's hull.
+    const cOff = getNodeRenderOffset(modId);
+    const pOff = getNodeRenderOffset(parentId);
+    const cp = rotLocal(cOff.x, cOff.y, a);
+    const pp = rotLocal(pOff.x, pOff.y, a);
+    // CP3e: strut spans the VISIBLE FACE EDGE of each sprite, not
+    // center-to-center -- so it can never terminate inside a sprite, never
+    // silently extend through one, and always renders exactly the true gap
+    // (zero-length/invisible when perfectly flush), regardless of either
+    // module's own extent. Uses the same _connectorAxisKeys + getModuleFaceExtent
+    // this edge's placement was computed from -- one authoritative source.
+    const { towardChildKey, towardParentKey } = _connectorAxisKeys(node, parent);
+    const segDx = cp.x - pp.x, segDy = cp.y - pp.y;
+    const segLen = Math.hypot(segDx, segDy) || 1;
+    const ux = segDx / segLen, uy = segDy / segLen;
+    const parentExtent = getModuleFaceExtent(parentId, towardChildKey);
+    const childExtent  = getModuleFaceExtent(modId, towardParentKey);
+    const ex1 = pp.x + ux * parentExtent, ey1 = pp.y + uy * parentExtent;
+    const ex2 = cp.x - ux * childExtent,  ey2 = cp.y - uy * childExtent;
     ctx.save();
     ctx.strokeStyle = (p.color || '#38bdf8') + 'aa';
     ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(cx + pp.x, cy + pp.y); ctx.lineTo(cx + cp.x, cy + cp.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + ex1, cy + ey1); ctx.lineTo(cx + ex2, cy + ey2); ctx.stroke();
     ctx.restore();
   }
 
   // ── pod bodies, each fixed in the ship frame and rotated with the ship ──
   for (const p of attachedPods) {
-    const node = shipAssembly[p.mod_id || p.pid];
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
     if (!node) continue;
-    const cp  = rotLocal(node.local_position.x, node.local_position.y, a);
+    // CP3c: flush render offset, see comment above.
+    const cOff = getNodeRenderOffset(modId);
+    const cp  = rotLocal(cOff.x, cOff.y, a);
     const csx = cx + cp.x, csy = cy + cp.y;
     const col = p.color || '#38bdf8';
     ctx.save();
     ctx.translate(csx, csy);
     ctx.rotate(a);
     const _spr = podRotations['south'];
-    const S = 52;
+    const S = getAttachedPodRenderSize(); // CP3b fix: real content-bbox scale match to ship, not a nominal constant
     if (_spr && _spr.naturalWidth) {
       ctx.imageSmoothingEnabled = false;
       ctx.shadowColor = col; ctx.shadowBlur = 6;
@@ -2319,7 +2637,7 @@ const DEV_PANEL = [
   { k: '/',             d: 'Full Fuel' },
   { k: 'H',             d: 'Full Hull' },
   { k: 'O',             d: 'Full Oxygen' },
-  { k: 'R',             d: 'Test Resources' },
+  { k: 'G',             d: 'Test Resources' },
   { k: 'P',             d: 'Spawn Test Pod' },
   { s: 'MISC' },
   { k: '[ / ]',         d: 'Cycle Background' },
@@ -3079,6 +3397,10 @@ function loop(now) {
     }
   }
 
+  // Mouse hover targeting -- world-space hit-test, independent of the
+  // E-key resolver and independent of interaction range (see hover.js).
+  updateHover();
+
   const { cx, cy } = getScreenCenter();
 
 
@@ -3120,7 +3442,6 @@ function loop(now) {
 
   drawWorldPods(cx, cy);
   drawDockingPod(cx, cy);   // CP2: animate pod in-flight during docking sequence
-  drawAttachedPods(cx, cy);
   drawMiningLaser(cx, cy);
 
   drawOrePickups(cx, cy);
@@ -3155,6 +3476,11 @@ function loop(now) {
   applyWorldTransform(ctx);
   ctx.imageSmoothingEnabled = false;
   drawShip(cx, cy, now, speed);
+  // Attached pods render after the ship (not before) so a docked pod sits
+  // flush and visible against the hull instead of being painted over by
+  // the ship sprite drawn on top of it. Render-order fix only -- CP2 graph
+  // data (local_position / CONNECTOR_GAP) is untouched.
+  drawAttachedPods(cx, cy);
   restoreWorldTransform(ctx);
 
   // DEV transform-leak assertion: HUD must render in identity screen space.
@@ -3979,4 +4305,13 @@ window.__DB = {
   },
   abortDocking(reason){ abortDocking(reason); },
   get DOCK_STATE(){ return DOCK_STATE; },
+  // -- CP3b hover test bridge --
+  get hoveredTarget(){ return hoveredTarget; },
+  getInteractionCandidates(){ return getInteractionCandidates(); },
+  get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
+  // -- CP3c connector-placement test bridge --
+  get shipHullHalfExtent(){ return _shipHullExtentWorld(); },
+  get podHullHalfExtent(){ return _podHullExtentWorld(); },
+  getNodeRenderOffset(nodeId){ return getNodeRenderOffset(nodeId); },
+  getModuleFaceExtent(modId, dirKey){ return getModuleFaceExtent(modId, dirKey); },
 };

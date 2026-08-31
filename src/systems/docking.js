@@ -98,6 +98,7 @@ export function getDockingAnimData() {
     slotModLocalX:   mod.local_position.x,
     slotModLocalY:   mod.local_position.y,
     slotConnDir:     conn.dir,
+    slotModId:       mod.pod_instance_id, // CP3c: lets caller pick correct flush half-width
   };
 }
 
