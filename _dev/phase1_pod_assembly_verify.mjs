@@ -14,6 +14,8 @@ await p.click('text=PLAY SOLO');
 await p.waitForTimeout(900);
 
 let PASS = 0, FAIL = 0;
+// CP2: wait for docking sequence to complete (replaces old instant-attach behavior)
+async function waitForDock(timeout=3000){const t0=Date.now();while(Date.now()-t0<timeout){const d=await p.evaluate(()=>window.__DB.isDocking);if(!d)return;await p.waitForTimeout(50);}throw new Error('waitForDock timed out');}
 const chk = (n, c, d = '') => { if (c) { PASS++; console.log('  PASS  ' + n); } else { FAIL++; console.log('  FAIL  ' + n + '   ' + d); } };
 const ev = fn => p.evaluate(fn);
 
@@ -48,7 +50,7 @@ await ev(() => {
 });
 await p.waitForTimeout(120);
 await p.keyboard.press('KeyE');
-await p.waitForTimeout(300);
+await waitForDock();
 let s = await ev(() => ({
   wp: __DB.worldPods.length, wp0: window.__wp0,
   ap: __DB.attachedPods.length, ap0: window.__ap0,
@@ -89,8 +91,8 @@ await ev(() => {
     __DB.worldPods.push({ pid: 'fill' + k, type: 'modular_space_pod', worldX: __DB.ship.worldX + 8, worldY: __DB.ship.worldY, angle: 0 });
   }
 });
-// press E repeatedly to fill
-for (let k = 0; k < 6; k++) { await p.keyboard.press('KeyE'); await p.waitForTimeout(160); }
+// CP2: wait for each docking sequence to complete before starting the next
+for (let k = 0; k < 6; k++) { await p.keyboard.press('KeyE'); await waitForDock(); await p.waitForTimeout(80); }
 let full = await ev(() => ({ free: __DB.freeConnectors, mods: __DB.attachedPods.length }));
 chk('graph extends beyond 4 core ports (pod-on-pod)', full.mods >= 4, JSON.stringify(full));
 
