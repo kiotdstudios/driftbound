@@ -18,6 +18,7 @@ import {
 } from './core/camera.js';
 import { initInteractions, resolveInteractions } from './systems/interactions.js';
 import { initDocking, isDocking, getDockingState, getDockingAnimData, startDocking, abortDocking, updateDocking, DOCK_STATE } from './systems/docking.js';
+import { resolveHover } from './systems/hover.js';
 
 
 
@@ -219,7 +220,97 @@ const POD_SPRITE_BASE  = 'modular_space_pod/';
 const POD_ANIM_KEY     = '8-frame_spaceship_flying_animation._Keep_the_ship';
 const POD_ATTACH_RANGE = 120;   // world-px — proximity to trigger attach prompt
 const POD_ATTACH_COST  = 10;    // Nebulite ore required to claim a pod
-const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship)
+const POD_DISPLAY_SIZE = 96;    // rendered size (slightly bigger than ship) -- world pods & in-flight docking anim only
+
+// -- CP3b: attached-pod render scale, derived from real sprite geometry -----
+// A docked module must read as "same scale language" as the core ship, not
+// a fixed nominal canvas size. Different source PNGs carry different amounts
+// of transparent padding (the ship's own 68px sprite vs the pod's 85px
+// sprite), so matching nominal sizes (or POD_DISPLAY_SIZE) does not make the
+// two sprites' *visible* content match. Instead we measure each sprite's
+// actual non-transparent content bounding box once (memoized) and scale the
+// pod so its visible content half-extent matches the ship's, in world px.
+// This is the ONLY lever available for the attached-pod render fix -- the
+// connector offset itself (CONNECTOR_GAP / local_position, CP2 graph data)
+// is untouched.
+let _attachedPodRenderSize = null; // memoized S (canvas draw size, px) once both sprites are ready
+
+function _contentBBox(img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) return null;
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const octx = off.getContext('2d');
+  octx.drawImage(img, 0, 0);
+  let data;
+  try { data = octx.getImageData(0, 0, w, h).data; } catch (e) { return null; } // tainted canvas safety
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 10) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+// Returns the canvas draw size (S, px) for attached-pod sprites.
+//
+// CP3b-2 (chief rejected the first fix -- matching pod/ship content
+// half-extent 1:1 overlaps so much it swallows the ship, ~41% of the ship's
+// own silhouette left visible). This version derives the pod size from
+// CONNECTOR_GAP itself (a measured CP2 graph constant, not a sprite pixel
+// count), which is the only anchor that is meaningful regardless of which
+// sprite art is loaded:
+//
+// CONNECTOR_GAP (46 world-px) is smaller than the ship's own visible
+// half-width in world-px (~51, measured below), so the docking point sits
+// INSIDE the ship's own silhouette -- any pod, at any size, therefore
+// overlaps the ship. That overlap is what guarantees "no floating gap"
+// (near edge = CONNECTOR_GAP - podHalfWidth is always < CONNECTOR_GAP <
+// shipHalfWidthWorld). Along the connector axis, the fraction of the
+// ship's own silhouette width that remains visible works out to:
+//
+//   visibleFraction = (shipHalfWidthWorld + CONNECTOR_GAP - podHalfWidthWorld)
+//                      / (2 * shipHalfWidthWorld)
+//
+// Setting podHalfWidthWorld = CONNECTOR_GAP makes this collapse to exactly
+// 0.5 -- independent of the ship's own actual size. That is the largest a
+// pod can be while still guaranteeing the ship's hull remains the dominant
+// (>=50%) visible shape: substantially bigger than the old
+// POD_DISPLAY_SIZE=96 (which read as ~60% ship-visible / a tiny accessory),
+// without swallowing the ship the way a naive 1:1 content-size match does
+// (~41% ship-visible). Falls back to POD_DISPLAY_SIZE if sprites aren't
+// loaded yet, or if the ship/pod geometry doesn't fit the assumption above.
+function getAttachedPodRenderSize() {
+  if (_attachedPodRenderSize != null) return _attachedPodRenderSize;
+  const shipImg = rotations['south'];
+  const podImg  = podRotations['south'];
+  if (!shipImg || !shipImg.naturalWidth || !podImg || !podImg.naturalWidth) return POD_DISPLAY_SIZE;
+
+  const shipBBox = _contentBBox(shipImg);
+  const podBBox  = _contentBBox(podImg);
+  if (!shipBBox || !podBBox || podBBox.width <= 0) return POD_DISPLAY_SIZE;
+
+  const shipHalfWidthWorld = (shipBBox.width / 2) * DISPLAY_SCALE;
+  // Sanity-check the assumption the formula relies on (connector point
+  // inside ship silhouette); if it doesn't hold for future sprite swaps,
+  // fall back rather than produce a nonsensical size.
+  if (shipHalfWidthWorld <= 0 || CONNECTOR_GAP <= 0 || CONNECTOR_GAP >= shipHalfWidthWorld * 2) {
+    return POD_DISPLAY_SIZE;
+  }
+
+  const podHalfWidthWorld = CONNECTOR_GAP;
+  const podScale = (podHalfWidthWorld * 2) / podBBox.width;
+  _attachedPodRenderSize = podImg.naturalWidth * podScale;
+  return _attachedPodRenderSize;
+}
+
 
 // Pod definitions — add more types here later
 const POD_TYPES = {
@@ -1457,6 +1548,68 @@ function drawAsteroids(cx, cy) {
 }
 // ─── DRAW ORE PICKUPS ────────────────────────────────────────────────────────
 
+// ─── MOUSE HOVER TARGETING ───────────────────────────────────────────────────
+// mouse screen pos -> camera.screenToWorld() -> world-space point -> hit-test
+// InteractionTarget candidates (world pods, attached pods, asteroids, future
+// types) -> hoveredTarget. Pure cursor readout: NEVER gates or duplicates the
+// E-key resolver in src/systems/interactions.js. Range (whether E can act)
+// stays wherever it already lives (POD_ATTACH_RANGE / MINE_RANGE checks) --
+// hover only answers "what is the cursor pointing at", independent of zoom.
+let hoveredTarget = null; // { type, id, worldX, worldY, hitRadius, ref } | null
+
+// Builds the current frame's InteractionTarget candidate list from every
+// hoverable object family. New object types (turrets, wrecks, NPCs, ...)
+// plug in here with the same shape -- resolveHover() itself never changes.
+function getInteractionCandidates() {
+  const candidates = [];
+  const a = shipHeadingAngle();
+
+  const _dockPid = isDocking() ? getDockingState().pod_instance_id : null;
+  for (const pod of worldPods) {
+    if (_dockPid && pod.pid === _dockPid) continue; // being animated in -- not a hover target
+    candidates.push({
+      type: 'world_pod', id: pod.pid,
+      worldX: pod.worldX, worldY: pod.worldY,
+      hitRadius: 60, // matches the beacon ring drawn in drawWorldPods (52 + pulse*8)
+      ref: pod,
+    });
+  }
+
+  for (const p of attachedPods) {
+    const node = shipAssembly[p.mod_id || p.pid];
+    if (!node) continue;
+    const cp = rotLocal(node.local_position.x, node.local_position.y, a);
+    candidates.push({
+      type: 'attached_pod', id: p.mod_id || p.pid,
+      worldX: ship.worldX + cp.x, worldY: ship.worldY + cp.y,
+      hitRadius: getAttachedPodRenderSize() / 2, // matches the CP3b visual scale fix
+      ref: p,
+    });
+  }
+
+  for (const ast of getAsteroids()) {
+    const t = ast.type || {};
+    const r = (Math.max(t.w || 40, t.h || 40) * (t.scale || 2)) / 2;
+    candidates.push({
+      type: 'asteroid', id: ast.id != null ? ast.id : ast,
+      worldX: ast.worldX, worldY: ast.worldY,
+      hitRadius: r,
+      ref: ast,
+    });
+  }
+
+  return candidates;
+}
+
+// Called once per frame (flight mode only -- interiorMode returns early in
+// loop() before this point is ever reached). Independent of interaction
+// range: this only determines what's under the cursor, in world space, at
+// the camera's current zoom -- screenToWorld() already accounts for zoom.
+function updateHover() {
+  const mp = getMousePosition();
+  const world = screenToWorld(mp.x, mp.y);
+  hoveredTarget = resolveHover(world.x, world.y, getInteractionCandidates());
+}
 // ─── DRAW WORLD PODS ─────────────────────────────────────────────────────────
 
 function drawWorldPods(cx, cy) {
@@ -1751,7 +1904,7 @@ function drawAttachedPods(cx, cy) {
     ctx.translate(csx, csy);
     ctx.rotate(a);
     const _spr = podRotations['south'];
-    const S = POD_DISPLAY_SIZE; // CP3 fix: match world-pod/docking-anim scale, not legacy hardcode
+    const S = getAttachedPodRenderSize(); // CP3b fix: real content-bbox scale match to ship, not a nominal constant
     if (_spr && _spr.naturalWidth) {
       ctx.imageSmoothingEnabled = false;
       ctx.shadowColor = col; ctx.shadowBlur = 6;
@@ -3463,6 +3616,10 @@ function loop(now) {
     }
   }
 
+  // Mouse hover targeting -- world-space hit-test, independent of the
+  // E-key resolver and independent of interaction range (see hover.js).
+  updateHover();
+
   const { cx, cy } = getScreenCenter();
 
 
@@ -4357,4 +4514,8 @@ window.__DB = {
   },
   abortDocking(reason){ abortDocking(reason); },
   get DOCK_STATE(){ return DOCK_STATE; },
+  // -- CP3b hover test bridge --
+  get hoveredTarget(){ return hoveredTarget; },
+  getInteractionCandidates(){ return getInteractionCandidates(); },
+  get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
 };
