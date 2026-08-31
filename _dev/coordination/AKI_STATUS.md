@@ -201,3 +201,32 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF: None on record.
 
 Aki: please confirm/correct the above retroactive entry and use the template for all future checkpoints.
+
+## DIRECTIVE ID: CP3c (connector placement fix, following chief QA on CP3b-2)
+
+- STATUS: COMPLETE — HOLDING for chief review, per explicit directive
+- BRANCH: agent/core-gameplay
+- COMMIT: db96304
+- FILES CHANGED: src/main.js (getAttachedPodRenderSize refactor + 2 new functions + 3 call-site fixes + test bridge), src/systems/docking.js (1 additive field), _dev/cp3_attached_pod_render_verify.mjs (rewritten overlap-aware assertions), _dev/hover_targeting_verify.mjs (stale probe-point fix)
+- QA FINDING (chief, with screenshot): CP3b-2 fixed pod render SCALE correctly, but the attached pod renders overlapping/on top of the ship hull instead of flush outside it against the connector. Chief also correctly flagged the existing "zero gap" test as insufficient, since overlapping sprites also produce zero background gap — it cannot distinguish flush-placement from overlap.
+- ROOT CAUSE: CONNECTOR_GAP (46 world-px, CP2 graph constant used for local_position) is smaller than the ship's own measured visible half-width (~51 world-px). The OLD render code drew every attached pod at the raw graph local_position, which therefore sits INSIDE the ship's own silhouette by construction — this was actually documented as an intentional (but wrong) shortcut in the CP3b-2 code comments ("any pod...overlaps the ship. That overlap is what guarantees no floating gap").
+- IMPLEMENTATION SUMMARY: Fix is render-time ONLY, per directive ("fix connector placement math only"):
+  - `getAttachedPodRenderSize()` refactored (output UNCHANGED, S≈126.13, pod scale not touched) to expose `_shipHalfWidthWorld()` as a reusable memoized helper.
+  - New `getModuleRenderHalfWidth(modId)`: ship half-width for 'core', pod half-width (getAttachedPodRenderSize()/2) for any pod id.
+  - New `getNodeRenderOffset(nodeId)`: walks the existing shipAssembly parent chain, reuses the graph's CONNECTOR DIRECTION (never its distance), and substitutes distance = parentHalfWidth + thisHalfWidth (flush, zero unintended overlap) at every hop. Does NOT write to shipAssembly/local_position/CONNECTOR_GAP anywhere — CP2 graph/save data layer is completely untouched.
+  - `drawAttachedPods()` (both the strut-line loop and pod-body loop) and `getInteractionCandidates()`'s attached-pod hover position now use `getNodeRenderOffset()` instead of raw `node.local_position`.
+  - `drawDockingPod()`'s in-flight docking-animation target updated to use the same flush-distance formula, so the pod does not visually "pop" outward the instant LOCK commits (previously it animated toward the same overlapping point it would then render at).
+  - `docking.js` `getDockingAnimData()` gained one additive field, `slotModId: mod.pod_instance_id` — pure data exposure (the value already existed internally), zero change to the docking state machine's logic.
+  - Test bridge (`window.__DB`) gained 3 read-only getters (`shipHalfWidthWorld`, `getNodeRenderOffset`, `getModuleRenderHalfWidth`) for test-harness use.
+- TEST CHANGES (per chief's explicit request): `cp3_attached_pod_render_verify.mjs` rewritten. New core assertion measures ship-only content bounding box (pod temporarily spliced out of `attachedPods`, re-added after) vs pod-leading-edge bounding box independently, and asserts they do not overlap beyond a 4px intentional-art tolerance — in addition to (not replacing) the existing flush/no-gap check. `hover_targeting_verify.mjs` had one stale hardcoded probe point (`shipPos.x + 46`, the old raw CONNECTOR_GAP) that no longer lands on the pod now that it renders further out; fixed to query `getNodeRenderOffset()` dynamically.
+- TEST RESULTS: cp3_attached_pod_render_verify.mjs 12/12 PASS | cp2_docking_verify.mjs 30/30 PASS | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS | hover_targeting_verify.mjs 22/22 PASS — 130/130 total, 0 regressions.
+- VISUAL VERIFICATION: All 4 connector directions (N/E/S/W) re-tested with fresh screenshots — pod sits cleanly outside the hull, flush against the connector strut, zero sprite overlap, on every side.
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: None
+- KNOWN WARNINGS: `drawDockingPod()`'s in-flight sprite still renders at the older `POD_DISPLAY_SIZE` (96) constant rather than `getAttachedPodRenderSize()` (~126) during the docking animation itself — this is a pre-existing discrepancy (not introduced by this fix) between the in-flight animation sprite size and the final attached sprite size. Out of scope for this directive (chief's instruction was placement math only, and this is a size mismatch, not a placement bug), flagging for chief's awareness/backlog.
+- BUGS DISCOVERED: None new. The insufficient old test (chief-flagged) has been rewritten as directed.
+- BLOCKERS: None.
+- QUESTIONS FOR CHIEF: None blocking. One backlog flag above (docking-animation sprite size mismatch) for chief's discretion on priority.
+- PUSHED TO GITHUB: YES — agent/core-gameplay, commit db96304
+- HOLD STATE: HOLDING. Per explicit directive, no further work will proceed on this branch until chief reviews.
