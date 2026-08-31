@@ -261,7 +261,7 @@ Aki: please confirm/correct the above retroactive entry and use the template for
 
 - STATUS: COMPLETE — HOLDING for chief visual review, per explicit directive
 - BRANCH: agent/core-gameplay
-- COMMIT: (see final commit hash below, appended after push)
+- COMMIT: 9d62022
 - BASELINE: agent/core-gameplay @ aca2261 (CP3d)
 - FILES CHANGED: src/main.js (new `_connectorAxisKeys()`, new `_podHullExtentWorld()`, `getModuleFaceExtent()` pod branch rewritten, `getNodeRenderOffset()` rewired to shared axis-key helper, `drawAttachedPods()` strut-drawing loop rewritten to edge-to-edge, `drawDockingPod()` in-flight target updated, test bridge additions), _dev/cp3_attached_pod_render_verify.mjs (one stale pre-CP3e assertion updated to use the new per-axis pod extent instead of a blanket S/2 — see BUGS DISCOVERED), _dev/cp3e_chain_render_verify.mjs (new, 25 assertions)
 - QA EVIDENCE (chief screenshot, 2026-08-31): north-side chain of two pods — lower pod separated from the ship by an excessive exposed line, upper pod floating with a large empty gap and no visible connector/strut.
@@ -289,5 +289,5 @@ Aki: please confirm/correct the above retroactive entry and use the template for
 - QUESTIONS FOR CHIEF: NONE
 - DECISIONS NEEDED FROM CHIEF: NONE
 - RECOMMENDED NEXT ACTION: Chief visual review of the 2-pod-chain screenshots (all 4 directions) and the new cp3e_chain_render_verify.mjs assertions; if approved, this checkpoint is ready for the next Integration Pass onto refactor/modular-core (Aki will not self-integrate).
-- PUSHED TO GITHUB: YES — agent/core-gameplay (see commit hash below)
+- PUSHED TO GITHUB: YES — agent/core-gameplay, commit 9d62022
 - CURRENT HOLD/GO STATE: HOLDING. No further directive will be started on this branch until chief reviews.
