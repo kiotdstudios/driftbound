@@ -1,5 +1,12 @@
 import { createEnvironment, ENV_CONFIG } from './render/background.js?v=20260830-5';
 import { DevLog } from './systems/devTools.js';
+import {
+  keys, inputLog, INPUT_LOG_MAX,
+  isEEdge, clearEEdge,
+  getMousePosition, isHeld,
+  onKeyDown, onWheel, onClear,
+  clearAllInput, initMouseTracking,
+} from './core/input.js';
 
 
 
@@ -511,7 +518,7 @@ const ship = {
 
 const particles = [];
 
-const keys      = {};
+// keys{} moved to src/core/input.js (Phase 2) — imported at top of file.
 
 let   mapMode   = false;  // true while regional map overlay is open (M key)
 
@@ -614,17 +621,8 @@ let fpsDisplay   = 0;
 
 let fpsTimer     = 0;
 
-let mouseX       = 0;
-
-let mouseY       = 0;
-
-let mouseDX      = 0;
-
-let mouseDY      = 0;
-
-const INPUT_LOG_MAX = 30;       // keep last 30 input events
-
-const inputLog   = [];          // [{t, type, code}]
+// mouseX/mouseY/mouseDX/mouseDY and inputLog/INPUT_LOG_MAX moved to
+// src/core/input.js (Phase 2) — see getMousePosition() import.
 
 
 // ─── CAMERA STATE ────────────────────────────────────────────────────────────
@@ -648,13 +646,7 @@ function addCamShake(amt) {
   camShakeY += (Math.random() - 0.5) * amt * 2;
 }
 
-// Mouse-wheel zoom (world only). Ignores wheel over menu text inputs.
-window.addEventListener('wheel', e => {
-  const tag = e.target && e.target.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-  if (e.deltaY < 0)      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); // up = zoom in
-  else if (e.deltaY > 0) camZoomIdx = Math.max(0, camZoomIdx - 1);                       // down = zoom out
-}, { passive: true });
+// Mouse-wheel zoom listener moved to src/core/input.js + onWheel() registration below.
 
 // ─── AMBIENT DEBRIS ───────────────────────────────────────────────────────────
 // Small tumbling rock fragments drifting across the sector — no collision.
@@ -715,17 +707,14 @@ function drawDebris(cx, cy) {
 
 
 // ─── INPUT ────────────────────────────────────────────────────────────────────
+// Centralized input capture now lives in src/core/input.js (Phase 2, see
+// MIGRATION_PLAN.md). input.js owns the only keydown/keyup/blur/mousemove
+// listeners. This module only decides what a keypress MEANS — F1/F2/F3
+// toggles, camera zoom stepping, map toggle, dev-cheat dispatch — via the
+// onKeyDown/onWheel/onClear subscriber hooks. Logic below is verbatim from
+// the original inline listener, just relocated into the subscriber callback.
 
-window.addEventListener('keydown', e => {
-
-  keys[e.code] = true;
-
-  if (e.code === 'KeyE' && !e.repeat) eEdge = true;
-
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
-
-    e.preventDefault();
-
+onKeyDown(e => {
   if (e.code === 'F1') { e.preventDefault(); debugMode = !debugMode; }
   if (e.code === 'F2') { e.preventDefault(); diagMode  = !diagMode; }
   if (e.code === 'F3') { e.preventDefault(); devControls = !devControls; }
@@ -740,14 +729,6 @@ window.addEventListener('keydown', e => {
       camZoomIdx = 1; e.preventDefault();
     }
   }
-
-  // Record for debugger
-
-  inputLog.push({ t: Date.now(), type: 'keydown', code: e.code });
-
-  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
-
-
 
   // Regional map toggle — M key
   if (e.code === 'KeyM') {
@@ -769,52 +750,28 @@ window.addEventListener('keydown', e => {
       return;
     }
   }
-
-
 });
 
-window.addEventListener('keyup', e => {
-
-  keys[e.code] = false;
-
-  inputLog.push({ t: Date.now(), type: 'keyup', code: e.code });
-
-  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
-
+// Mouse-wheel zoom (world only). Ignores wheel over menu text inputs.
+onWheel(e => {
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.deltaY < 0)      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); // up = zoom in
+  else if (e.deltaY > 0) camZoomIdx = Math.max(0, camZoomIdx - 1);                       // down = zoom out
 });
 
 // Focus loss / tab switch must clear ALL held input so keys never "stick"
 // (a stuck movement or Shift key would otherwise cause runaway thrust/boost).
-function clearAllInput() {
-  for (const k in keys) keys[k] = false;
-  eEdge = false;
-  _ePressed = false;
+// input.js clears its own held-key/edge state; this registers the gameplay
+// side of the same reset (was inside the same clearAllInput() function).
+onClear(() => {
   ship.boostRamp = 0;
   _thrusting = false;
   _boosting  = false;
-}
-window.addEventListener('blur', clearAllInput);
-document.addEventListener('visibilitychange', () => { if (document.hidden) clearAllInput(); });
-
-
-
-// ─── MOUSE TRACKING ──────────────────────────────────────────────────────────
-
-canvas.addEventListener('mousemove', e => {
-
-  mouseDX = e.clientX - mouseX;
-
-  mouseDY = e.clientY - mouseY;
-
-  mouseX  = e.clientX;
-
-  mouseY  = e.clientY;
-
-  inputLog.push({ t: Date.now(), type: 'mouse', x: mouseX, y: mouseY, dx: mouseDX, dy: mouseDY });
-
-  if (inputLog.length > INPUT_LOG_MAX) inputLog.shift();
-
+  _ePressed  = false;
 });
+
+initMouseTracking(canvas);
 
 
 
@@ -1124,7 +1081,7 @@ function updateMining() {
   let _eHandled = false;
 
   // (1) Enter an attached pod's interior. Edge-triggered; pods with an interior only.
-  if (eEdge && !interiorMode && interiorFadeDir === 0) {
+  if (isEEdge() && !interiorMode && interiorFadeDir === 0) {
     for (let _pi = 0; _pi < attachedPods.length; _pi++) {
       if (attachedPods[_pi].hasInterior) {
         interiorPodIdx  = _pi;
@@ -1138,7 +1095,7 @@ function updateMining() {
   }
 
   // (2) Claim / attach a world pod. Edge-triggered.
-  if (!_eHandled && eEdge) {
+  if (!_eHandled && isEEdge()) {
     _eHandled = tryClaimWorldPod();
   }
 
@@ -2172,17 +2129,17 @@ function updateInteriorPlayer() {
   // weapon pickup
   if (!weaponPickedUp) {
     const dw = Math.hypot(iPlayerX - WEAPON_PICKUP_POS.col - 0.5, iPlayerY - WEAPON_PICKUP_POS.row - 0.5);
-    if (dw < 1.2 && eEdge) {
+    if (dw < 1.2 && isEEdge()) {
       weapon = { type:'pulse_rifle', ammo:24, maxAmmo:24 };
       weaponPickedUp = true;
       showToast('⚡ PULSE RIFLE acquired  24/24');
-      eEdge = false;
+      clearEEdge();
     }
   }
   // door exit (secured only)
   const onDoor = Math.floor(iPlayerX)===DOOR_COL && Math.floor(iPlayerY)===DOOR_ROW;
-  if (onDoor && podSecured && eEdge) {
-    interiorFadeDir = -1; eEdge = false;
+  if (onDoor && podSecured && isEEdge()) {
+    interiorFadeDir = -1; clearEEdge();
   }
 }
 
@@ -3337,13 +3294,15 @@ function drawDebug(speed) {
 
   divider('MOUSE');
 
-  row('SCREEN X',    mouseX);
+  const _mp = getMousePosition();
 
-  row('SCREEN Y',    mouseY);
+  row('SCREEN X',    _mp.x);
 
-  row('DELTA X',     mouseDX);
+  row('SCREEN Y',    _mp.y);
 
-  row('DELTA Y',     mouseDY);
+  row('DELTA X',     _mp.dx);
+
+  row('DELTA Y',     _mp.dy);
 
 
 
@@ -3619,7 +3578,7 @@ function loop(now) {
     drawToast();
     if (debugMode) drawDebug(0);
     if (diagMode)  drawDiagnostics();
-    eEdge = false;
+    clearEEdge();
     requestAnimationFrame(loop);
     return;
   }
@@ -3779,7 +3738,7 @@ function loop(now) {
   if (debugMode) drawDebug(speed);
   if (diagMode)  drawDiagnostics();
 
-  eEdge = false;
+  clearEEdge();
   requestAnimationFrame(loop);
 
 }
@@ -4225,7 +4184,7 @@ let _thrusting = false;
 let _boosting  = false;
 let _dbgAX     = 0, _dbgAY = 0;   // last-frame accel (F2 debug readout)
 let _ePressed  = false;
-let eEdge      = false;
+// eEdge moved to src/core/input.js (Phase 2) — see isEEdge()/clearEEdge() import.
 
 // ── INTERIOR SYSTEM ──────────────────────────────────────────
 // ── COMBAT & POD STATE ────────────────────────────────────────────────
@@ -4482,7 +4441,7 @@ window.__DB = {
   get worldPods(){ return worldPods; },
   get attachedPods(){ return attachedPods; },
   get podRotations(){ return podRotations; },
-  get eEdge(){ return eEdge; },
+  get eEdge(){ return isEEdge(); },
   get toastMsg(){ return toastMsg; },
   get DevLog(){ return DevLog; },
   get devControls(){ return devControls; },
