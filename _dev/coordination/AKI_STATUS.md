@@ -30,6 +30,28 @@ your implementation checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: CP3 — Attached-pod render fix (scale + z-order)
+- STATUS: COMPLETE — HOLD for chief review
+- BRANCH: agent/core-gameplay
+- COMMIT: 1cd7a04
+- FILES CHANGED: src/main.js (2 edits), _dev/cp3_attached_pod_render_verify.mjs (new, 6/6)
+- IMPLEMENTATION SUMMARY: Manual QA bug (Chief): docked pod rendered too small and offset beside/below the core instead of flush-mounted.
+  Root cause was purely render-side, not a docking/graph bug:
+  1. drawAttachedPods() used a stale hardcoded sprite size `const S = 52` instead of `POD_DISPLAY_SIZE` (96) used by every other pod render call site (world pods, in-flight docking animation) — pod rendered at ~54% correct scale.
+  2. drawAttachedPods(cx, cy) was called BEFORE drawShip(cx, cy, ...) in the render loop. Since CONNECTOR_GAP (46px) places the pod center inside the ship's own visible-sprite radius (~51px), the ship sprite painted over the pod on every frame, leaving only a small sliver visible (read by QA as "offset").
+  Fix (main.js only): S = 52 -> S = POD_DISPLAY_SIZE; moved drawAttachedPods(cx, cy) to run immediately after drawShip(cx, cy, now, speed) inside the same world-transform block.
+  CP2 docking logic and graph data (local_position, CONNECTOR_GAP, docking.js state machine) were NOT touched — the stored transform was already correct, confirmed by the new test's graph-sanity check. Per directive, docking.js changes were only authorized if the render fix proved the stored transform wrong; it did not, so docking.js is untouched.
+  Note on scope: main.js is nominally chief-approval-locked for orchestration changes, but this was a directly chief-commissioned bug-fix directive, so proceeding was in scope. drawAttachedPods/drawShip render pipeline is Aki/Core Gameplay ownership (ship graph/docking), not Orcha's HUD/map/minimap/BG/VFX modules — no Orcha-owned files touched.
+- TEST RESULTS: cp3_attached_pod_render_verify 6/6 (new) | cp2_docking_verify 30/30 | map_input_suppression_verify 18/18 | e_interaction_regression 25/25 | phase1_pod_assembly_verify 23/23 | phase0_smoke PASS
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: none — render-order/scale fix only, no behavior change to docking state machine or graph data
+- KNOWN WARNINGS: none
+- PUSHED TO GITHUB: agent/core-gameplay only (per directive)
+- QUESTIONS FOR CHIEF: none — awaiting review/GO on CP2-final + this CP3 render fix together
+
+---
+
 ### DIRECTIVE ID: A2 / CP2-final — Safe release on mid-dock invalidation
 - STATUS: COMPLETE (final safety correction)
 - BRANCH: agent/core-gameplay
