@@ -6,7 +6,7 @@ checkpoint commit.
 
 ---
 
-## Checkpoint template
+## Checkpoint template (per Chief Communication Protocol, effective 2026-08-31 — see CHIEF_DIRECTIVES.md)
 
 ```
 ### DIRECTIVE ID:
@@ -20,8 +20,14 @@ checkpoint commit.
 - CONSOLE ERRORS:
 - KNOWN DELTAS:
 - KNOWN WARNINGS:
+- BLOCKERS:
+- BUGS DISCOVERED:
+- BAD NEWS / UNEXPECTED FINDINGS:
+- RECOMMENDED NEXT ACTION:
+- CURRENT HOLD/GO STATE:
 - PUSHED TO GITHUB:
-- QUESTIONS FOR CHIEF:
+- QUESTIONS FOR CHIEF: (write NONE if none)
+- DECISIONS NEEDED FROM CHIEF: (write NONE if none)
 ```
 
 ---
@@ -41,6 +47,12 @@ checkpoint commit.
 - KNOWN DELTAS: None in gameplay/rendering behavior. HUD row counts, camera round-trip, map suppression, mining, and save/load all match pre-merge baselines exactly.
 
 - KNOWN ISSUES: `pod_art_check.mjs`'s hardcoded 500ms wait and the mining-HP informational lines in `mining_zoom_regression.mjs`/`boost_regression.mjs` are candidates for a future test-harness cleanup directive (not urgent — none of them gate CI).
+
+- BLOCKERS: None. The one blocker mid-pass (the `waitForDock()` race, which would have made this integration report inaccurate green results) was resolved with Chief's Option-1 approval before this checkpoint was finalized.
+
+- BUGS DISCOVERED: One — the `waitForDock()` test-harness race described above (Chief-approved fix, applied, verified, closed this pass). No production/gameplay bugs discovered in either A2 or W2 during the merge or the full regression sweep. Full root-cause writeup logged in `TEAM_NOTES.md` (new file, this checkpoint) since it's a reusable lesson beyond this one task.
+
+- BAD NEWS / UNEXPECTED FINDINGS: The `waitForDock()` bug initially looked like a real CP2 regression (two suites failing "world pod consumed") until isolated repro proved it was test-only. Reporting this transparently rather than silently patching it, per Chief Communication Protocol — see full writeup in `TEAM_NOTES.md`. No other unexpected findings; the merge itself was cleaner than anticipated given both branches touched `src/main.js` extensively (verified via explicit dupe-declaration scan, documented as a new standard merge-checklist step in `TEAM_NOTES.md`).
 
 - QUESTIONS FOR CHIEF: NONE.
 

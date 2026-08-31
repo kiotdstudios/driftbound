@@ -1,6 +1,11 @@
 # PROJECT_STATUS.md
 
-_Last updated: 2026-08-31 03:50 PDT — by Orcha, Integration Pass 03 complete._
+_Last updated: 2026-08-31 09:20 PDT — by Orcha, per Chief Communication Protocol adoption (see CHIEF_DIRECTIVES.md and new _dev/coordination/TEAM_NOTES.md)._
+
+**See also `TEAM_NOTES.md`** for cross-agent findings, architecture notes,
+and test-harness quirks discovered during recent work that don't belong to
+a single directive (e.g. the merge-integrity checklist used for Integration
+Pass 03, and the full root-cause writeup of the `waitForDock()` race).
 
 ## Approved integration HEAD
 **APPROVED INTEGRATION HEAD: `ca6de88`**

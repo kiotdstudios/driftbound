@@ -93,28 +93,54 @@ until both feature branches report back.
 
 ---
 
-## STANDING REQUIREMENT — Checkpoint Report Format (effective 2026-08-31)
+## STANDING REQUIREMENT — Chief Communication Protocol (effective 2026-08-31, supersedes prior 2026-08-31 checkpoint-format note below)
 
-Every future `AKI_STATUS.md` / `ORCHA_STATUS.md` checkpoint entry MUST include
-all of the following sections, in this order, in addition to the existing
-fields already in the template below:
+Any information Chief may need must be written to GitHub **before** an
+agent declares a task/check-in complete. Rule of thumb: **if Chief cannot
+reconstruct your full check-in from GitHub alone, the check-in is
+incomplete.** Do not rely on the user to copy/paste messages between
+sessions.
 
-- Completion report
-- Commit / branch / files changed
-- Tests + failures/warnings
-- Known issues / deltas
+Put task completion details in your own agent status file (never the
+other agent's):
+- Aki → `_dev/coordination/AKI_STATUS.md`
+- Orcha → `_dev/coordination/ORCHA_STATUS.md`
+
+Every checkpoint entry MUST include ALL of the following fields, in this
+order:
+
+- STATUS
+- BRANCH + COMMIT
+- FILES CHANGED
+- IMPLEMENTATION SUMMARY
+- TESTS / RESULTS
+- RUNTIME / CONSOLE STATUS
+- KNOWN DELTAS
+- KNOWN WARNINGS
+- BLOCKERS
+- BUGS DISCOVERED
+- BAD NEWS / UNEXPECTED FINDINGS
 - QUESTIONS FOR CHIEF (if none, write literally `QUESTIONS FOR CHIEF: NONE`)
 - DECISIONS NEEDED FROM CHIEF (if none, write literally `DECISIONS NEEDED FROM CHIEF: NONE`)
-- Recommended next action, if any
-- Current HOLD/GO state
+- RECOMMENDED NEXT ACTION
+- CURRENT HOLD/GO STATE
 
 An agent does **not** declare a task "done" until this complete report has
 been written to their status file, committed, and pushed. A verbal/chat
 summary to the user is not a substitute — the pushed status file is the
-authoritative record Chief reconstructs from. If a decision is pending
-(e.g. a question is still open), the checkpoint must say so explicitly
-(`CURRENT HOLD/GO STATE: HOLD — awaiting Chief decision on <topic>`) rather
-than being left unwritten or reported only in chat.
+authoritative record Chief reconstructs from.
+
+**`_dev/coordination/TEAM_NOTES.md`** is the catch-all for anything
+broader than a single directive/task: new discoveries, QA findings, bad
+news, architecture risks, technical debt, test-harness quirks, and
+cross-agent notes that don't belong to one directive or one agent's
+personal status file. Both agents read and write here.
+
+If a finding — in a personal status file or in `TEAM_NOTES.md` — changes
+project direction or affects the other agent, it must **also** be
+reflected in `PROJECT_STATUS.md` and/or `DECISIONS.md`. Those two files
+remain the canonical, current-state record; `TEAM_NOTES.md` and the
+per-agent status logs are the historical/discovery record that feeds them.
 
 ## Directive Template (for Chief use)
 
