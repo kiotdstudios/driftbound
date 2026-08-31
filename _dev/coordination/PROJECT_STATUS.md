@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md
 
-_Last updated: 2026-08-30 19:41 PDT (22:41 EDT) — by Orcha, per Chief confirmation of COORD-1._
+_Last updated: 2026-08-30 19:43 PDT (22:43 EDT) — by Orcha, per Chief authorization of Parallel Cycle 03._
 
 ## Approved integration HEAD
 **APPROVED INTEGRATION HEAD: `5fffc07`**
@@ -11,15 +11,21 @@ suppression) → `712880b` (Orcha, W1 minimap extraction) → `5fffc07`
 (Orcha, COORD-1 coordination system install). COORD-1 accepted by Chief as
 documentation/coordination-only; no rollback required.
 
-## Next parallel cycle
-**NEXT PARALLEL CYCLE: Aki CP2 Docking / Orcha HUD Extraction**
+## Parallel cycle status
+**PARALLEL CYCLE 03 — ACTIVE**
+- **A2 CP2 DOCKING — GO** (Aki / `agent/core-gameplay`, baseline `5fffc07`)
+- **W2 HUD EXTRACTION — GO** (Orcha / `agent/world-ui`, baseline `5fffc07`)
 
-Not yet `STATUS: GO` — awaiting Chief-authored directives in
-`CHIEF_DIRECTIVES.md` with full scope (objective, allowed files, do-not-touch,
-acceptance tests, stop condition) before either agent begins. Per Chief
-instruction: **HOLD integration until both feature branches report back.**
-No additional integration or gameplay work is to be performed from the
-`integration/` worktree without an explicit Chief `GO` directive.
+Both directives sync from code baseline `5fffc07`. `36b1921` is coordination
+metadata only and does not alter the code baseline. See `CHIEF_DIRECTIVES.md`
+for full scope. Aki owns docking/gameplay; Orcha owns HUD presentation.
+Neither agent edits the other's status file, touches the integration
+worktree, or merges/cherry-picks/rebases the other's work.
+
+**Integration remains HOLD** until both feature branches report back
+(checkpoint entries in `AKI_STATUS.md` / `ORCHA_STATUS.md`) and Chief
+reviews. No additional integration or gameplay work is to be performed from
+the `integration/` worktree without an explicit Chief `GO` directive.
 
 ## Active branches
 - `refactor/modular-core` — integration branch (this file's home). Local
@@ -29,12 +35,11 @@ No additional integration or gameplay work is to be performed from the
 - `main` — untouched by current work.
 
 ## Active directives
-See `CHIEF_DIRECTIVES.md`. As of this checkpoint: no directive is
-`STATUS: GO` for new feature work. Both agents HOLD until Chief issues
-`GO` directives for the next parallel cycle (Aki CP2 Docking / Orcha HUD
-Extraction — see "Next parallel cycle" above). Integration worktree HOLDs
-as well — no further integration or gameplay work until both feature
-branches report back per their own status files.
+See `CHIEF_DIRECTIVES.md`. As of this checkpoint: `A2` (Aki, CP2 Physical
+Docking) and `W2` (Orcha, HUD Module Extraction) are both `STATUS: GO` —
+Parallel Cycle 03. Integration worktree HOLDs — no further integration or
+gameplay work from `integration/` until both feature branches report back
+per their own status files and Chief reviews.
 
 ## Completed systems
 - Regional map overlay extraction (`src/render/map.js`)
@@ -46,7 +51,8 @@ branches report back per their own status files.
 - E-action interaction resolver (mine / attach pod / enter pod interior)
 
 ## Systems in progress
-- None currently assigned (holding for next Chief directive).
+- CP2 Physical Docking (Aki, `agent/core-gameplay`, directive A2) — GO, in progress.
+- HUD Module Extraction to `src/render/hud.js` (Orcha, `agent/world-ui`, directive W2) — GO, in progress.
 
 ## P0 / P1 / P2 defects
 - **P0:** None open.
