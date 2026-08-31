@@ -93,6 +93,29 @@ until both feature branches report back.
 
 ---
 
+## STANDING REQUIREMENT — Checkpoint Report Format (effective 2026-08-31)
+
+Every future `AKI_STATUS.md` / `ORCHA_STATUS.md` checkpoint entry MUST include
+all of the following sections, in this order, in addition to the existing
+fields already in the template below:
+
+- Completion report
+- Commit / branch / files changed
+- Tests + failures/warnings
+- Known issues / deltas
+- QUESTIONS FOR CHIEF (if none, write literally `QUESTIONS FOR CHIEF: NONE`)
+- DECISIONS NEEDED FROM CHIEF (if none, write literally `DECISIONS NEEDED FROM CHIEF: NONE`)
+- Recommended next action, if any
+- Current HOLD/GO state
+
+An agent does **not** declare a task "done" until this complete report has
+been written to their status file, committed, and pushed. A verbal/chat
+summary to the user is not a substitute — the pushed status file is the
+authoritative record Chief reconstructs from. If a decision is pending
+(e.g. a question is still open), the checkpoint must say so explicitly
+(`CURRENT HOLD/GO STATE: HOLD — awaiting Chief decision on <topic>`) rather
+than being left unwritten or reported only in chat.
+
 ## Directive Template (for Chief use)
 
 ```
