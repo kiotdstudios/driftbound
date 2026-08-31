@@ -8,12 +8,13 @@ a single directive (e.g. the merge-integrity checklist used for Integration
 Pass 03, and the full root-cause writeup of the `waitForDock()` race).
 
 ## Approved integration HEAD
-**APPROVED INTEGRATION HEAD: `692fc51`**
+**APPROVED INTEGRATION HEAD: `cd1a6cf`**
 
-`refactor/modular-core` @ `692fc51`. Integration Pass 04 merged Aki's
+`refactor/modular-core` @ `cd1a6cf`. Integration Pass 04 merged Aki's
 Chief-approved CP3→CP3e lineage from `agent/core-gameplay @ b298885`
 (CP3e implementation `9d62022`) on top of the prior approved integration
-baseline and Chief approval record `4cfb56c`. See `INTEGRATION_QUEUE.md`.
+baseline and Chief approval record `4cfb56c`; merge commit `692fc51`,
+coordination checkpoint `cd1a6cf`. See `INTEGRATION_QUEUE.md`.
 
 ## Integration status
 **INTEGRATION PASS 04 — COMPLETE.** CP3 through CP3e is integrated. The
@@ -26,7 +27,7 @@ explicit Chief `GO`.
 
 ## Active branches
 - `refactor/modular-core` — integration branch (this file's home). Local
-  worktree: `integration/`. Head: `692fc51` (coordination follow-up pending).
+  worktree: `integration/`. Head: `cd1a6cf`.
 - `agent/core-gameplay` — Aki. Worktree: `agent-core/`. Head: `b298885` (integrated).
 - `agent/world-ui` — Orcha. Worktree: `agent-world-ui/`. Head: `e6944ea` (integrated).
 - `main` — untouched by current work.

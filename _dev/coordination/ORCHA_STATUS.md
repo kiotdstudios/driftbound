@@ -33,9 +33,9 @@ checkpoint commit.
 ---
 
 ### DIRECTIVE ID: Integration Pass 04 (CP3–CP3e)
-- STATUS: COMPLETE — coordination checkpoint pending push
+- STATUS: COMPLETE — ready to push
 - BRANCH: refactor/modular-core
-- COMMIT: 692fc51 (merge of agent/core-gameplay @ b298885; CP3e implementation 9d62022)
+- COMMIT: 692fc51 (merge of agent/core-gameplay @ b298885; CP3e implementation 9d62022) + cd1a6cf (coordination checkpoint)
 - FILES CHANGED: CP3 lineage merge (`src/main.js`, `src/systems/docking.js`, new `src/systems/hover.js`, CP3/hover tests, `AKI_STATUS.md`, `TEAM_NOTES.md`) plus coordination-only updates in this checkpoint.
 - IMPLEMENTATION SUMMARY: Chief authorized integration after accepting CP3e as the current art-complete baseline. Merged Aki's CP3→CP3e lineage with `--no-ff`. Resolved the sole add/add conflict in `TEAM_NOTES.md` by preserving both histories. Production code auto-merged cleanly. No gameplay, PNG, or directional-art compensation was added during integration.
 - TEST RESULTS: cp3e chain 25/25 PASS on final isolated merged-build rerun; CP3 attached-pod 12/12; hover 22/22; CP2 docking 30/30; assembly 23/23; E interaction 25/25; HUD layout PASS; HUD zoom PASS; camera 36/36; map input 18/18; phase0 smoke PASS. All run sequentially.
@@ -48,7 +48,7 @@ checkpoint commit.
 - BAD NEWS / UNEXPECTED FINDINGS: Two stale HTTP servers were simultaneously bound to port 8420 and served Aki's worktree instead of integration. They were replaced with one hidden server rooted in the integration checkout before evidence was accepted.
 - RECOMMENDED NEXT ACTION: HOLD for Chief's next directive; revisit east/west and diagonal faces only when directional pod art exists.
 - CURRENT HOLD/GO STATE: HOLD.
-- PUSHED TO GITHUB: Pending coordination checkpoint push.
+- PUSHED TO GITHUB: YES — `refactor/modular-core` through coordination checkpoint `cd1a6cf` (final status-confirmation commit follows).
 - QUESTIONS FOR CHIEF: NONE
 - DECISIONS NEEDED FROM CHIEF: NONE
 
