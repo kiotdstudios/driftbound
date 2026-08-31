@@ -161,6 +161,21 @@ async function main() {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  console.log('\n[CP2] Ore reservation model (available/reserved/consumed)');
+
+  await check('reservedOre == POD_ATTACH_COST during ALIGNING', async () => {
+    const s = await getDB(page, () => window.__DB.dockingState);
+    strictEqual(s.reservedOre, 10, `expected 10, got ${s.reservedOre}`);
+  });
+
+  await check('ship.ore + reservedOre == ore before docking started', async () => {
+    // ship.ore was 50 before startDocking; cost=10; so ship.ore=40, reservedOre=10, sum=50
+    const ore = await getDB(page, () => window.__DB.ship.ore);
+    const s   = await getDB(page, () => window.__DB.dockingState);
+    strictEqual(ore + s.reservedOre, 50, `available(${ore}) + reserved(${s.reservedOre}) should equal 50`);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   console.log('\n[CP2] State transitions (timing)');
 
   await check('transitions ALIGNING → PULLING_IN after ~500 ms', async () => {
@@ -218,6 +233,11 @@ async function main() {
     strictEqual(await getDB(page, () => window.__DB.isDocking), false);
   });
 
+  await check('reservedOre == 0 after commit (ore consumed, not double-counted)', async () => {
+    const s = await getDB(page, () => window.__DB.dockingState);
+    strictEqual(s.reservedOre, 0, `expected 0 after commit, got ${s.reservedOre}`);
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   console.log('\n[CP2] Abort path');
 
@@ -239,6 +259,11 @@ async function main() {
       const s = await getDB(page, () => window.__DB.dockingState);
       // After abort, slotMod/slotConn are null — check we're IDLE
       strictEqual(s.phase, 'IDLE');
+    });
+
+    await check('reservedOre == 0 after abort (reservation released)', async () => {
+      const s = await getDB(page, () => window.__DB.dockingState);
+      strictEqual(s.reservedOre, 0, `expected 0 after abort, got ${s.reservedOre}`);
     });
 
     // Re-setup for abort during PULLING_IN test

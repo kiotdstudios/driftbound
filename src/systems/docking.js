@@ -29,11 +29,12 @@ let _ctx = null;
 
 // All fields are stable IDs (strings) or primitives — no raw object refs.
 const _s = {
-  phase:      DOCK_STATE.IDLE,
-  elapsed:    0,
-  podPid:     null,   // pid of the world pod being docked
-  slotModId:  null,   // pod_instance_id of the module hosting the reserved connector
-  slotConnId: null,   // connector id ('N', 'E', 'S', 'W')
+  phase:       DOCK_STATE.IDLE,
+  elapsed:     0,
+  podPid:      null,   // pid of the world pod being docked
+  slotModId:   null,   // pod_instance_id of the module hosting the reserved connector
+  slotConnId:  null,   // connector id ('N', 'E', 'S', 'W')
+  reservedOre: 0,      // ore moved from available→reserved at ALIGNING; refunded on abort, consumed at LOCK
 };
 
 // ── Context helpers — always look up fresh, never cache the object ref ────────
@@ -66,6 +67,7 @@ export function getDockingState() {
     pod_instance_id: _s.podPid,
     slotMod:         _s.slotModId,
     slotConn:        _s.slotConnId,
+    reservedOre:     _s.reservedOre,
   };
 }
 
@@ -123,16 +125,19 @@ export function startDocking(pod) {
   }
 
   // Reserve resources and connector before any graph mutation.
-  ship.ore           -= POD_ATTACH_COST;
-  slot.conn.free      = false;
-  slot.conn.state     = 'reserved';
+  // Ore moves available → reserved: deducted from ship.ore now, tracked in _s.reservedOre
+  // for exact refund on abort. At LOCK it is consumed (reserved cleared, ore stays gone).
+  ship.ore            -= POD_ATTACH_COST;
+  slot.conn.free       = false;
+  slot.conn.state      = 'reserved';
 
   // Store only stable IDs — no raw object refs.
-  _s.phase      = DOCK_STATE.ALIGNING;
-  _s.elapsed    = 0;
-  _s.podPid     = pod.pid;
-  _s.slotModId  = slot.mod.pod_instance_id;
-  _s.slotConnId = slot.conn.id;
+  _s.phase       = DOCK_STATE.ALIGNING;
+  _s.elapsed     = 0;
+  _s.podPid      = pod.pid;
+  _s.slotModId   = slot.mod.pod_instance_id;
+  _s.slotConnId  = slot.conn.id;
+  _s.reservedOre = POD_ATTACH_COST;   // exact amount reserved — used for refund, not the constant
 
   return true;
 }
@@ -145,7 +150,9 @@ export function abortDocking(_reason) {
 
   const { ship, POD_ATTACH_COST, showToast } = _ctx;
 
-  ship.ore += POD_ATTACH_COST;
+  // Refund exactly what was reserved — never the bare constant, which could drift.
+  ship.ore         += _s.reservedOre;
+  _s.reservedOre    = 0;   // reservation released
 
   // Restore connector via fresh lookup — never cache object refs.
   const conn = _getConn();
@@ -223,13 +230,18 @@ function _commitDock() {
   spawnLockParticles(14);
   saveGame();
 
+  // Ore consumed: it was already deducted from ship.ore at reservation.
+  // Clear the reserved ledger so _reset() finds it at 0.
+  _s.reservedOre = 0;
+
   _reset();
 }
 
 function _reset() {
-  _s.phase      = DOCK_STATE.IDLE;
-  _s.elapsed    = 0;
-  _s.podPid     = null;
-  _s.slotModId  = null;
-  _s.slotConnId = null;
+  _s.phase       = DOCK_STATE.IDLE;
+  _s.elapsed     = 0;
+  _s.podPid      = null;
+  _s.slotModId   = null;
+  _s.slotConnId  = null;
+  _s.reservedOre = 0;
 }
