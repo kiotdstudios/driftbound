@@ -28,6 +28,26 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF:
 ```
 
+
+### DIRECTIVE ID: CP3b-2 — Attached-pod render scale rework + mouse hover targeting
+- STATUS: COMPLETE — HOLD for chief review
+- BRANCH: agent/core-gameplay
+- COMMIT: 0655257
+- FILES CHANGED: src/main.js (attached-pod scale formula reworked; hover system added), src/systems/hover.js (new), _dev/cp3_attached_pod_render_verify.mjs (rewritten, 10/10), _dev/hover_targeting_verify.mjs (new, 22/22)
+- IMPLEMENTATION SUMMARY: Chief QA rejected the prior CP3 fix (S=96 via POD_DISPLAY_SIZE) as still too small/detached, and added a second requirement (mouse hover). Two independent fixes, one commit:
+
+  1. Attached-pod render scale. First attempt (not committed) matched the pod's real visible content half-extent 1:1 to the ship's own — computed S=151.8, but visually swallowed the ship (screenshot + pixel-probe confirmed only ~41% of the ship's own silhouette stayed visible). Reworked getAttachedPodRenderSize() to anchor on CONNECTOR_GAP (the CP2 graph constant, not a sprite pixel count) instead: setting the pod's own visible half-width equal to CONNECTOR_GAP makes the ship's remaining-visible-fraction along the connector axis collapse to exactly 0.5 algebraically, independent of the ship's own actual size. Result: S=126.1 -- substantially bigger than the old rejected 96 (reads as a full module), well short of the 151.8 that swallows the ship. Verified via screenshot (ship hull clearly visible, pod flush with zero gap) and pixel-probe scan (dynamic bounding-box + connector-edge measurement, not a single hardcoded pixel color).
+
+  2. Mouse hover targeting (new file src/systems/hover.js + main.js wiring). resolveHover(worldX, worldY, candidates) is a pure nearest-candidate hit test with zero side effects and zero dependency on main.js. getInteractionCandidates() builds the frame's candidate list from world pods, attached pods, and asteroids (shape documented as extensible for future InteractionTarget-compatible objects). updateHover() runs the full spec'd path every frame: mouse screen position -> camera.screenToWorld() -> world-space point -> resolveHover() -> hoveredTarget, gated by the existing interiorMode early-return in loop(). Hover and interaction range are fully decoupled -- hover has no range concept at all, it only answers "what is the cursor pointing at". Does not touch src/systems/interactions.js (confirmed still the sole E-key resolver) or src/core/camera.js (Orcha-owned, provides screenToWorld/worldToScreen unmodified).
+
+- TEST RESULTS: cp2_docking_verify 30/30, phase1_pod_assembly_verify 23/23, map_input_suppression_verify 18/18, cp3_attached_pod_render_verify 10/10 (rewritten -- now measures live bounding-box/connector-edge geometry instead of hardcoded pixel colors), hover_targeting_verify 22/22 (new -- world pod / attached pod / asteroid / empty-space hover at all 5 zoom levels, plus side-effect-free and no-range-gating checks). phase0_smoke and e_interaction_regression test [6] (pod-interior fade timing) both show a pre-existing flaky failure -- confirmed present on the unmodified baseline commit c224fc2 via git stash + 3x rerun before any of this session's changes were applied, so not a regression from this work.
+- RUNTIME READY: yes (flake noted above is baseline-pre-existing, unrelated to timing changes in this diff)
+- CONSOLE ERRORS: 0 across all test runs
+- KNOWN DELTAS: attached-pod visual scale is now a derived/measured value (126.1px draw size), not a fixed constant -- will shift automatically if CONNECTOR_GAP or the pod/ship sprite assets ever change, per design.
+- KNOWN WARNINGS: none new.
+- PUSHED TO GITHUB: yes -- agent/core-gameplay only (c224fc2..0655257)
+- QUESTIONS FOR CHIEF: none -- holding for review/GO.
+
 ---
 
 ### DIRECTIVE ID: CP3 — Attached-pod render fix (scale + z-order)
