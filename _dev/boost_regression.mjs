@@ -1,7 +1,10 @@
 // Verifies: Shift release ends boost accel immediately; releasing movement stops accel;
 // velocity coasts (never increases) with no input; blur clears held keys. + mining works.
+// MIGRATED (Test Harness Migration checkpoint): targets modular index.html via window.__DB
+// bridge instead of legacy bare globals (ship/keys/_thrusting/_boosting/FUEL_CAPACITY no
+// longer exist on window under ES module scope). Assertions/intent unchanged.
 import { chromium } from 'playwright';
-const URL='http://localhost:8420/driftbound_flight_test.html';
+const URL='http://localhost:8420/index.html';
 const browser=await chromium.launch({headless:true});
 const page=await browser.newPage();
 await page.setViewportSize({width:1280,height:720});
@@ -12,10 +15,10 @@ await page.goto(URL,{waitUntil:'domcontentloaded'});
 await page.waitForTimeout(1500);
 await page.click('text=PLAY SOLO');
 await page.waitForTimeout(800);
-await page.evaluate(()=>{ ship.fuel = FUEL_CAPACITY; }); // ensure boost available
+await page.evaluate(()=>{ window.__DB.ship.fuel = window.__DB.FUEL_CAPACITY; }); // ensure boost available
 
-const spd = ()=>page.evaluate(()=>Math.hypot(ship.vx,ship.vy));
-const state = ()=>page.evaluate(()=>({spd:+Math.hypot(ship.vx,ship.vy).toFixed(4), boostRamp:+ship.boostRamp.toFixed(3), thr:_thrusting, boo:_boosting}));
+const spd = ()=>page.evaluate(()=>Math.hypot(window.__DB.ship.vx,window.__DB.ship.vy));
+const state = ()=>page.evaluate(()=>({spd:+Math.hypot(window.__DB.ship.vx,window.__DB.ship.vy).toFixed(4), boostRamp:+window.__DB.ship.boostRamp.toFixed(3), thr:window.__DB.thrusting, boo:window.__DB.boosting}));
 
 console.log('=== PHASE 1: hold W + Shift (accelerate/boost) ===');
 await page.keyboard.down('KeyW'); await page.keyboard.down('ShiftLeft');
@@ -45,7 +48,7 @@ await page.keyboard.down('KeyW'); await page.keyboard.down('ShiftLeft');
 await page.waitForTimeout(300);
 await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
 await page.waitForTimeout(200);
-const afterBlur=await page.evaluate(()=>({anyKey:Object.values(keys).some(Boolean), boostRamp:+ship.boostRamp.toFixed(3), thr:_thrusting, boo:_boosting}));
+const afterBlur=await page.evaluate(()=>({anyKey:Object.values(window.__DB.keys).some(Boolean), boostRamp:+window.__DB.ship.boostRamp.toFixed(3), thr:window.__DB.thrusting, boo:window.__DB.boosting}));
 console.log('after blur:', JSON.stringify(afterBlur));
 // let it settle: speed must not climb with no input
 await page.waitForTimeout(400);
@@ -55,11 +58,12 @@ console.log('speed climbed after blur?', climbedAfterBlur);
 
 console.log('=== PHASE 5: mining still works ===');
 const mine=await page.evaluate(async()=>{
+  const asteroids=window.__DB.asteroids, ship=window.__DB.ship;
   const i=asteroids.findIndex(a=>a.type?.id==='lg_planet'&&a.hp>0); if(i<0)return null;
   const a=asteroids[i]; ship.worldX=a.worldX-30; ship.worldY=a.worldY; ship.vx=0; ship.vy=0; return {i,hp0:a.hp};
 });
 if(mine){ await page.keyboard.down('KeyE'); await page.waitForTimeout(1500); await page.keyboard.up('KeyE');
-  const hp=await page.evaluate((i)=>asteroids[i]?asteroids[i].hp:'gone', mine.i);
+  const hp=await page.evaluate((i)=>{ const a=window.__DB.asteroids[i]; return a?a.hp:'gone'; }, mine.i);
   console.log(`mining lg_planet hp ${mine.hp0} -> ${hp}`); }
 
 console.log('\n=== RESULTS ===');

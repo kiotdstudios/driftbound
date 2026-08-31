@@ -1,8 +1,10 @@
 // DRIFTBOUND regression: mine sm_brown, lg_brown, lg_planet (no uncaught exceptions,
 // HUD stays visible) + verify camera zoom controls. Run: node mining_zoom_regression.mjs
+// MIGRATED (Test Harness Migration checkpoint): targets modular index.html via window.__DB
+// bridge/window.__DB.camera instead of legacy bare globals. Assertions/intent unchanged.
 import { chromium } from 'playwright';
-const URL = 'http://localhost:8420/driftbound_flight_test.html';
-const DEV = String.raw`C:\Users\diepowel\Documents\DRIFTBOUND\_dev`;
+const URL = 'http://localhost:8420/index.html';
+const DEV = String.raw`C:\Users\diepowel\Documents\driftbound_work\integration\_dev`;
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
@@ -18,10 +20,9 @@ await page.waitForTimeout(1500);
 
 async function mine(typeId) {
   const t = await page.evaluate((tid) => {
+    const asteroids = window.__DB.asteroids, ship = window.__DB.ship;
     let a = asteroids.find(x => x.type?.id === tid && x.hp > 0);
-    if (!a) { // spawn one if none present
-      return null;
-    }
+    if (!a) { return null; }
     ship.worldX = a.worldX - 55; ship.worldY = a.worldY; ship.vx = 0; ship.vy = 0;
     return { id: a.type.id, hp: a.hp, maxHp: a.maxHp };
   }, typeId);
@@ -31,7 +32,7 @@ async function mine(typeId) {
   await page.keyboard.up('KeyE');
   await page.waitForTimeout(400);
   const after = await page.evaluate((tid) => {
-    const a = asteroids.find(x => x.type?.id === tid);
+    const a = window.__DB.asteroids.find(x => x.type?.id === tid);
     return { hp: a ? a.hp : 'destroyed/gone' };
   }, typeId);
   console.log(`  ${typeId}: start hp ${t.hp} -> ${JSON.stringify(after.hp)}`);
@@ -42,13 +43,13 @@ for (const id of ['sm_brown','lg_brown','lg_planet']) await mine(id);
 
 // HUD visibility check: is drawHUD still executing (frameCount advancing) and no errors
 const hud = await page.evaluate(() => {
-  const f0 = frameCount; return new Promise(r => setTimeout(() => r({ advanced: frameCount > f0, frameCount }), 300));
+  const f0 = window.__DB.frameCount; return new Promise(r => setTimeout(() => r({ advanced: window.__DB.frameCount > f0, frameCount: window.__DB.frameCount }), 300));
 });
 console.log('HUD/loop alive after mining:', hud.advanced, '(frameCount', hud.frameCount + ')');
 
 // DevLog errors
 const devlog = await page.evaluate(() => {
-  try { return (DevLog.entries||[]).filter(e=>e.level==='ERROR'||e.level==='CRITICAL')
+  try { return (window.__DB.DevLog.entries||[]).filter(e=>e.level==='ERROR'||e.level==='CRITICAL')
       .map(e=>({level:e.level,system:e.system,message:e.message})); }
   catch(e){ return 'DevLog fail: '+e.message; }
 });
@@ -56,23 +57,23 @@ console.log('DevLog errors:', JSON.stringify(devlog));
 
 // === ZOOM CONTROLS ===
 console.log('\n=== ZOOM CONTROLS ===');
-const z0 = await page.evaluate(() => ({ idx: camZoomIdx, zoom: +camZoom.toFixed(3), target: camZoomTarget }));
+const z0 = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, zoom: +s.zoom.toFixed(3), target: s.zoomTarget }; });
 console.log('default:', JSON.stringify(z0), '(expect idx 1, target 0.85)');
 
 await page.keyboard.press('Minus');  await page.waitForTimeout(300);
-const zOut = await page.evaluate(() => ({ idx: camZoomIdx, target: camZoomTarget, zoom:+camZoom.toFixed(3) }));
+const zOut = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, target: s.zoomTarget, zoom:+s.zoom.toFixed(3) }; });
 console.log("after '-':", JSON.stringify(zOut), '(expect idx 0, target 0.70)');
 
 await page.keyboard.press('Equal'); await page.keyboard.press('Equal'); await page.waitForTimeout(300);
-const zIn = await page.evaluate(() => ({ idx: camZoomIdx, target: camZoomTarget }));
+const zIn = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, target: s.zoomTarget }; });
 console.log("after '=' x2:", JSON.stringify(zIn), '(expect idx 1, target 0.85)');
 
 await page.keyboard.press('Equal'); await page.keyboard.press('Equal'); await page.keyboard.press('Equal'); await page.keyboard.press('Equal'); await page.waitForTimeout(300);
-const zMax = await page.evaluate(() => ({ idx: camZoomIdx, target: camZoomTarget }));
+const zMax = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, target: s.zoomTarget }; });
 console.log("after many '=':", JSON.stringify(zMax), '(expect clamp idx 4, target 1.30)');
 
 await page.keyboard.press('Digit0'); await page.waitForTimeout(300);
-const zReset = await page.evaluate(() => ({ idx: camZoomIdx, target: camZoomTarget }));
+const zReset = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, target: s.zoomTarget }; });
 console.log("after '0':", JSON.stringify(zReset), '(expect idx 1, target 0.85)');
 
 // Screenshot at default 0.85x — let it settle
@@ -82,7 +83,7 @@ console.log('screenshot: zoom_085x.png');
 
 // Zoom out to 0.70x max and screenshot
 await page.keyboard.press('Minus'); await page.waitForTimeout(900);
-const zFinal = await page.evaluate(() => ({ idx: camZoomIdx, zoom:+camZoom.toFixed(3) }));
+const zFinal = await page.evaluate(() => { const s=window.__DB.camera.getState(); return { idx: s.zoomIdx, zoom:+s.zoom.toFixed(3) }; });
 await page.screenshot({ path: DEV + String.raw`\zoom_070x_max_out.png` });
 console.log('max zoom-out:', JSON.stringify(zFinal), '-> zoom_070x_max_out.png');
 

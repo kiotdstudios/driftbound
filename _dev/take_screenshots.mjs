@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+// MIGRATED (Test Harness Migration checkpoint): targets modular index.html.
+// Pure screenshot utility — no game-state evaluate() calls, so no bridge changes needed.
 
 const browser = await chromium.launch({ headless: true });
 const shots = [
@@ -9,7 +11,7 @@ const shots = [
 for (const { w, h, name } of shots) {
   const page = await browser.newPage();
   await page.setViewportSize({ width: w, height: h });
-  await page.goto('http://localhost:8420/driftbound_flight_test.html', { waitUntil: 'load' });
+  await page.goto('http://localhost:8420/index.html', { waitUntil: 'load' });
   await page.waitForTimeout(800);
 
   // Click PLAY SOLO to bypass lobby
@@ -26,7 +28,7 @@ for (const { w, h, name } of shots) {
   // Wait for game loop to run, stars to render, etc.
   await page.waitForTimeout(2500);
 
-  const outPath = `C:\\Users\\diepowel\\Documents\\DRIFTBOUND\\_dev\\${name}`;
+  const outPath = `C:\\Users\\diepowel\\Documents\\driftbound_work\\integration\\_dev\\${name}`;
   await page.screenshot({ path: outPath });
   console.log(`Captured: ${name} (${w}x${h})`);
   await page.close();
