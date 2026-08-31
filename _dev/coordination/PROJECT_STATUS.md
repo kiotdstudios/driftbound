@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md
 
-_Last updated: 2026-08-31 09:20 PDT — by Orcha, per Chief Communication Protocol adoption (see CHIEF_DIRECTIVES.md and new _dev/coordination/TEAM_NOTES.md)._
+_Last updated: 2026-08-31 — Integration Pass 04._
 
 **See also `TEAM_NOTES.md`** for cross-agent findings, architecture notes,
 and test-harness quirks discovered during recent work that don't belong to
@@ -8,25 +8,17 @@ a single directive (e.g. the merge-integrity checklist used for Integration
 Pass 03, and the full root-cause writeup of the `waitForDock()` race).
 
 ## Approved integration HEAD
-**APPROVED INTEGRATION HEAD: `ca6de88`**
+**APPROVED INTEGRATION HEAD: `692fc51`**
 
-`refactor/modular-core` @ `ca6de88`. Contains, in order since the last
-Chief-confirmed baseline `5fffc07`: `36b1921` (Chief HOLD confirmation) →
-`31ed323` (Chief authorization of Parallel Cycle 03) → `7dd3289` (merge:
-A2/CP2 physical docking, Aki, source `73f21ef`) → `32a4c02` (merge: W2 HUD
-extraction, Orcha, source `e6944ea`) → `ba10a0d` (Chief standing
-checkpoint-format requirement) → `ca6de88` (test-harness `waitForDock()`
-race fix, Chief-approved, Integration Pass 03). See `INTEGRATION_QUEUE.md`
-for the full itemized integration log.
+`refactor/modular-core` @ `692fc51`. Integration Pass 04 merged Aki's
+Chief-approved CP3→CP3e lineage from `agent/core-gameplay @ b298885`
+(CP3e implementation `9d62022`) on top of the prior approved integration
+baseline and Chief approval record `4cfb56c`. See `INTEGRATION_QUEUE.md`.
 
-## Parallel cycle status
-**PARALLEL CYCLE 03 — INTEGRATED.** Both `A2` (Aki, CP2 Physical Docking)
-and `W2` (Orcha, HUD Module Extraction) merged cleanly into
-`refactor/modular-core` — no merge conflicts, no duplicate top-level
-functions/declarations post-merge (verified). Full combined regression
-sweep green (see `INTEGRATION_QUEUE.md` entry 9 for the one test-harness
-fix required along the way — Chief-approved, test-only, no gameplay
-changes).
+## Integration status
+**INTEGRATION PASS 04 — COMPLETE.** CP3 through CP3e is integrated. The
+merge had one documentation-only add/add conflict in `TEAM_NOTES.md`; both
+histories were preserved. Production code auto-merged cleanly.
 
 **Integration worktree now HOLDs again** pending the next Chief directive.
 No further integration or gameplay work from `integration/` without an
@@ -34,15 +26,14 @@ explicit Chief `GO`.
 
 ## Active branches
 - `refactor/modular-core` — integration branch (this file's home). Local
-  worktree: `integration/`. Head: `ca6de88`.
-- `agent/core-gameplay` — Aki. Worktree: `agent-core/`. Head: `73f21ef` (integrated).
+  worktree: `integration/`. Head: `692fc51` (coordination follow-up pending).
+- `agent/core-gameplay` — Aki. Worktree: `agent-core/`. Head: `b298885` (integrated).
 - `agent/world-ui` — Orcha. Worktree: `agent-world-ui/`. Head: `e6944ea` (integrated).
 - `main` — untouched by current work.
 
 ## Active directives
-See `CHIEF_DIRECTIVES.md`. As of this checkpoint: `A2` and `W2` are both
-INTEGRATED. No directive is currently `STATUS: GO`. Both agents and the
-integration worktree HOLD until Chief issues the next directive.
+See `CHIEF_DIRECTIVES.md`. CP3e is INTEGRATED. No directive is currently
+`STATUS: GO`; agents and the integration worktree HOLD for Chief.
 
 ## Completed systems
 - Regional map overlay extraction (`src/render/map.js`)
@@ -54,6 +45,8 @@ integration worktree HOLD until Chief issues the next directive.
 - Camera system (zoom, lead, round-trip world↔screen)
 - E-action interaction resolver (mine / attach pod / enter pod interior)
 - CP2 Physical Docking state machine (`src/systems/docking.js`) — A2 (INTEGRATED)
+- CP3–CP3e attached-pod scale, hover targeting, per-axis core/pod hull
+  extents, and multi-pod connector continuity (INTEGRATED)
 
 ## Systems in progress
 - None currently assigned. HOLD — awaiting next Chief directive.
@@ -64,6 +57,12 @@ integration worktree HOLD until Chief issues the next directive.
 - **P2:** None open.
 
 ## Known stale/flaky tests
+- `cp3e_chain_render_verify.mjs` samples the fully composited animated
+  canvas. During Integration Pass 04 its second-edge pixel-bound assertion
+  transiently reported 24/25 twice while all geometry assertions passed;
+  the same test passed 25/25 against Aki's branch and on the final isolated
+  merged-build rerun. No assertion was weakened and no code workaround was
+  added. Treat a lone pixel sample as timing-sensitive and rerun isolated.
 - `e_interaction_regression.mjs` test [6] (pod interior enter/fade) has a
   pre-existing timing flake where `fade` occasionally lands just under the
   0.99 threshold (e.g. 0.92) on a slow/contended frame. Reproduces clean on

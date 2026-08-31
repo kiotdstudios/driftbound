@@ -27,6 +27,22 @@ a permanent, GitHub-visible home.
 
 ---
 
+### [2026-08-31] CP3e composited-canvas pixel sample sensitivity — logged by Chief integrator
+- CATEGORY: test quirk / integration QA
+- AFFECTS: `cp3e_chain_render_verify.mjs`
+- DETAIL: Integration Pass 04 initially produced 24/25 twice: only the
+  second east-chain edge's independent pixel-bound assertion sampled a
+  transient overlap, while every authoritative N/E/S/W geometry formula,
+  gap, hover, and docking-stability assertion passed. An A/B run of the
+  identical test against Aki's untouched worktree passed 25/25, and the
+  final isolated merged-build diagnostic rerun also passed 25/25. The test
+  scans the fully composited animated canvas, so background/frame timing can
+  perturb a single pixel-bound sample. Assertions were not weakened and no
+  compensating gameplay or temporary-art hack was added.
+- FOLLOW-UP: Keep the assertion. Rerun isolated before classifying a lone
+  pixel-scan result as a geometry regression; rely on the independent
+  geometry assertions and visual review together.
+
 ### [2026-08-31] Chief Communication Protocol adopted — logged by Orcha
 - CATEGORY: cross-agent note (process)
 - AFFECTS: both agents, all future checkpoints
