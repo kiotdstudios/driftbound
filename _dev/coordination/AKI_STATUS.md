@@ -28,6 +28,25 @@ your implementation checkpoint commit.
 - QUESTIONS FOR CHIEF:
 ```
 
+### DIRECTIVE ID: Dev-Environment QA Investigation (CP3b-2 retest blocked)
+- STATUS: BLOCKED — code confirmed correct, local dev environment issue preventing chief/user retest of CP3b-2
+- BRANCH: agent/core-gameplay
+- COMMIT: a5d5ad4 (no new code this entry — investigation only, verifying the already-pushed CP3b-2 commit 0655257)
+- FILES CHANGED: none (diagnostics only)
+- IMPLEMENTATION SUMMARY: User reported CP3b-2 (attached-pod scale fix, S=126.1) still appears broken in manual browser retest — pod still looked disconnected/small. Ran automated Playwright repro (_dev-adjacent script, not committed) docking at all 4 connector directions (N/E/S/W) directly against pushed commit a5d5ad4 served fresh from the correct folder (Documents/driftbound_work/agent-core). All 4 directions rendered correctly — pod substantial, flush, no gap, ship hull still visible. This confirms the pushed code itself is correct. User's browser environment was then checked: confirmed correct folder (Documents/driftbound_work/agent-core) and correct branch/commit (agent/core-gameplay @ a5d5ad4) via git log/git branch on the user's machine. User's browser console showed window.__DB.attachedPodRenderSize === undefined (should read ~126.13 on the correct build) even in a fresh Incognito window, which rules out normal cache. Ran netstat on the user's machine and found two separate processes simultaneously bound to port 8420: PID 21444 (listening on 0.0.0.0:8420 and [::]:8420, wildcard/all-interfaces) and PID 13988 (listening on 127.0.0.1:8420, localhost-only). Leading theory: one of these is a stale/leftover server process answering localhost:8420 ahead of the fresh server the user starts from the correct folder, silently serving old code with no error to signal it. Neither process has been killed yet, and it has not yet been confirmed which PID is actually answering the user's browser — this is the next step, pending chief/user go-ahead.
+- TEST RESULTS: Automated 4-direction repro (N/E/S/W) against pushed commit a5d5ad4 — all 4 visually correct (screenshots taken, not committed to repo, held locally). No regression suite changes — no code touched this entry.
+- RUNTIME READY: Pushed code confirmed runtime-ready via direct repro. User's live browser session currently NOT reflecting the pushed code — environment issue, not a code issue.
+- CONSOLE ERRORS: User's console shows window.__DB.attachedPodRenderSize === undefined, which is the smoking-gun signal that the browser is not running the current build.
+- KNOWN DELTAS: none in code.
+- KNOWN WARNINGS: none new.
+- BLOCKERS: Cannot get a clean chief/user visual retest of CP3b-2 until the local dev-server/process conflict on port 8420 is resolved on the user's machine.
+- BUGS DISCOVERED: (1) Two processes bound to port 8420 simultaneously on the user's machine (PIDs 21444, 13988) — one is very likely stale and silently serving an old build. (2) Two separate top-level Driftbound folders exist under Documents (DRIFTBOUND, created 8/30, and driftbound_work, created 8/31, containing agent-core/agent-world-ui/integration) — increases risk of exactly this kind of silent stale-serving confusion going forward.
+- BAD NEWS / UNEXPECTED FINDINGS: The CP3b-2 "still broken" report was a false alarm as far as the code is concerned — automated repro against the exact pushed commit passes cleanly on all 4 connector directions. The real issue is environmental (stale server process + duplicate project folders on disk), not a regression in the shipped fix.
+- QUESTIONS FOR CHIEF: None blocking — see decisions needed below.
+- DECISIONS NEEDED FROM CHIEF: (1) OK to kill both port-8420 processes on the user's machine and restart a single clean server from Documents/driftbound_work/agent-core to unblock retest? (2) Should the DRIFTBOUND (8/30) and driftbound_work (8/31) folders be analyzed, condensed, and organized into one canonical folder to prevent recurrence? Flagged in detail in TEAM_NOTES.md.
+- RECOMMENDED NEXT ACTION: Kill PIDs 21444 and 13988, start one fresh server from Documents/driftbound_work/agent-core, have user hard-retest CP3b-2 in a new Incognito window and re-check window.__DB.attachedPodRenderSize reads ~126.13. Separately, have DRIFTBOUND (8/30 folder) contents inspected and either archived/deleted or merged so only one canonical Driftbound folder remains on disk.
+- CURRENT HOLD/GO STATE: HOLD — CP3b-2 code itself is GO (pushed, verified correct via direct repro), but chief/user visual sign-off is blocked pending the environment cleanup above.
+
 
 ### DIRECTIVE ID: CP3b-2 — Attached-pod render scale rework + mouse hover targeting
 - STATUS: COMPLETE — HOLD for chief review
