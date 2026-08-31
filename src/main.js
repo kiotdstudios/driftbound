@@ -7,6 +7,13 @@ import {
   onKeyDown, onWheel, onClear,
   clearAllInput, initMouseTracking,
 } from './core/input.js';
+import {
+  initCamera, addCameraShake,
+  getZoomLevels, getZoomIndex, setZoomIndex, zoomIn, zoomOut, resetZoom,
+  updateCamera, getCameraState, getScreenCenter,
+  worldToScreen, screenToWorld,
+  applyWorldTransform, restoreWorldTransform,
+} from './core/camera.js';
 
 
 
@@ -626,25 +633,9 @@ let fpsTimer     = 0;
 
 
 // ─── CAMERA STATE ────────────────────────────────────────────────────────────
-// camLead: smooth lead offset toward velocity — gives a "looking ahead" feel
-// camShake: impulse decay from impacts/boost — settles quickly
-let camLeadX = 0, camLeadY = 0;
-let camShakeX = 0, camShakeY = 0;
-let _prevBoosting = false;  // edge-detect for boost-start flare
-
-// CAMERA ZOOM: world-only zoom. HUD/minimap/map/diag/notifications NEVER scaled.
-// Scales around screen center (not ship) so smooth camera lead is preserved.
-const ZOOM_LEVELS  = [0.70, 0.85, 1.00, 1.15, 1.30];
-let   camZoomIdx    = 1;               // default = 0.85x
-let   camZoom       = ZOOM_LEVELS[1];  // current eased value
-let   camZoomTarget = ZOOM_LEVELS[1];  // target level
-const ZOOM_LERP     = 0.14;            // easing speed toward target
-let   _hudLeakLogged = false;          // one-shot guard for HUD transform-leak assert
-
-function addCamShake(amt) {
-  camShakeX += (Math.random() - 0.5) * amt * 2;
-  camShakeY += (Math.random() - 0.5) * amt * 2;
-}
+// Camera lead/shake/zoom state + world<->screen transforms extracted to
+// src/core/camera.js (Phase 3, see MIGRATION_PLAN.md). Imported at top of file.
+let   _hudLeakLogged = false;          // one-shot guard for HUD transform-leak assert (HUD-owned, stays here)
 
 // Mouse-wheel zoom listener moved to src/core/input.js + onWheel() registration below.
 
@@ -722,11 +713,11 @@ onKeyDown(e => {
   // Camera zoom: '-' out, '+'/'=' in, '0' reset to default (0.85x). World only.
   if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
-      camZoomIdx = Math.max(0, camZoomIdx - 1); e.preventDefault();
+      zoomOut(); e.preventDefault();
     } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
-      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); e.preventDefault();
+      zoomIn(); e.preventDefault();
     } else if (e.code === 'Digit0' || e.code === 'Numpad0') {
-      camZoomIdx = 1; e.preventDefault();
+      resetZoom(); e.preventDefault();
     }
   }
 
@@ -756,8 +747,8 @@ onKeyDown(e => {
 onWheel(e => {
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-  if (e.deltaY < 0)      camZoomIdx = Math.min(ZOOM_LEVELS.length - 1, camZoomIdx + 1); // up = zoom in
-  else if (e.deltaY > 0) camZoomIdx = Math.max(0, camZoomIdx - 1);                       // down = zoom out
+  if (e.deltaY < 0)      zoomIn();   // up = zoom in
+  else if (e.deltaY > 0) zoomOut();  // down = zoom out
 });
 
 // Focus loss / tab switch must clear ALL held input so keys never "stick"
@@ -772,6 +763,7 @@ onClear(() => {
 });
 
 initMouseTracking(canvas);
+initCamera(canvas);
 
 
 
@@ -3462,7 +3454,7 @@ function update() {
         ship.iframes = COLLISION_IFRAMES;
 
         ship.hitFlash = 18;
-        addCamShake(8);
+        addCameraShake(8);
 
         showToast('HULL DAMAGE  │  ' + ship.hp + ' / ' + SHIP_MAX_HP);
 
@@ -3494,7 +3486,7 @@ function update() {
         ship.hp         = Math.max(0, ship.hp - PVP_DAMAGE);
         ship.pvpIframes = PVP_IFRAMES;
         ship.hitFlash   = 22;
-        addCamShake(8);
+        addCameraShake(8);
         showToast('COLLISION — ' + rp.name + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
         // Tell server — so rp's client also takes damage
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -3587,22 +3579,13 @@ function loop(now) {
 
   updateMining();
 
-  // ── Camera: smooth lead + shake ──────────────────────────────────────────
-  // Lead eases toward velocity direction — makes space feel responsive.
-  // Shake decays quickly after impacts and boost-start.
-  const CAM_LEAD = 18, CAM_LAG = 0.09;
-  camLeadX += (ship.vx * CAM_LEAD - camLeadX) * CAM_LAG;
-  camLeadY += (ship.vy * CAM_LEAD - camLeadY) * CAM_LAG;
-  camShakeX *= 0.74; camShakeY *= 0.74;
-
-  // Zoom easing toward the selected level (world only)
-  camZoomTarget = ZOOM_LEVELS[camZoomIdx];
-  camZoom += (camZoomTarget - camZoom) * ZOOM_LERP;
-
-  // Boost-start: camera jolt + orange flare particle burst
-  const _curBoosting = _boosting && ship.fuel > 0;
-  if (_curBoosting && !_prevBoosting) {
-    addCamShake(6);
+  // ── Camera: smooth lead + shake, zoom easing, boost-jolt shake ──────────
+  // All camera math now lives in src/core/camera.js (Phase 3, behavior-
+  // preserving — same CAM_LEAD/CAM_LAG/ZOOM_LERP/shake formulas). Boost-start
+  // flare particles remain gameplay VFX, owned here.
+  const _boostActiveForShake = _boosting && ship.fuel > 0;
+  const _boostJustStarted = updateCamera(ship.worldX, ship.worldY, ship.vx, ship.vy, _boostActiveForShake);
+  if (_boostJustStarted) {
     const _fBackIdx = (DIRS.indexOf(ship.dir) + 4) % 8;
     const _fBackRad = DIR_ANGLES_DEG[_fBackIdx] * Math.PI / 180;
     const _fpx = canvas.width/2 + Math.cos(_fBackRad) * DISPLAY_SIZE * 0.38;
@@ -3616,11 +3599,8 @@ function loop(now) {
         color: Math.random() < 0.6 ? '#ff8820' : '#ffdd44' });
     }
   }
-  _prevBoosting = _curBoosting;
 
-  const cx = Math.round(canvas.width  / 2 - camLeadX + camShakeX);
-
-  const cy = Math.round(canvas.height / 2 - camLeadY + camShakeY);
+  const { cx, cy } = getScreenCenter();
 
 
 
@@ -3650,9 +3630,7 @@ function loop(now) {
                boosting: (ship.boostRamp > 0.15), now });
 
   // ── WORLD ZOOM TRANSFORM (world only; scales around screen center) ──
-  ctx.save();
-  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
-    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  applyWorldTransform(ctx);
   ctx.imageSmoothingEnabled = false;  // keep pixel sprites crisp under zoom
 
   tickDebris();
@@ -3677,7 +3655,7 @@ function loop(now) {
 
   drawParticles();
 
-  ctx.restore();  // ── END WORLD ZOOM (block A) ──
+  restoreWorldTransform(ctx);  // ── END WORLD ZOOM (block A) ──
 
   // Hit flash (full-screen UI overlay — NOT zoomed)
 
@@ -3694,12 +3672,10 @@ function loop(now) {
   }
 
   // Ship drawn under the same world zoom so it scales with the world
-  ctx.save();
-  { const _zcx = canvas.width/2, _zcy = canvas.height/2;
-    ctx.translate(_zcx, _zcy); ctx.scale(camZoom, camZoom); ctx.translate(-_zcx, -_zcy); }
+  applyWorldTransform(ctx);
   ctx.imageSmoothingEnabled = false;
   drawShip(cx, cy, now, speed);
-  ctx.restore();
+  restoreWorldTransform(ctx);
 
   // DEV transform-leak assertion: HUD must render in identity screen space.
   // If the world zoom/translation is still active here, it leaked past a restore.
@@ -4170,7 +4146,7 @@ function handleServerMsg(msg) {
         ship.hp         = Math.max(0, ship.hp - (msg.damage || PVP_DAMAGE));
         ship.pvpIframes = PVP_IFRAMES;
         ship.hitFlash   = 22;
-        addCamShake(8);
+        addCameraShake(8);
         const attacker  = remotePlayers[msg.by];
         const aName     = attacker ? attacker.name : 'enemy';
         showToast('HIT BY ' + aName + '  │  HULL ' + ship.hp + '/' + SHIP_MAX_HP, '#ef4444');
@@ -4453,6 +4429,11 @@ window.__DB = {
   get accelMult(){ return massAccelMult(); },
   get fuelMult(){ return massFuelMult(); },
   get freeConnectors(){ return countFreeConnectors(); },
+  get camera(){ return {
+    getState: getCameraState,
+    worldToScreen, screenToWorld,
+    zoomLevels: getZoomLevels(), getZoomIndex, setZoomIndex, zoomIn, zoomOut, resetZoom,
+  }; },
   saveGame(){ return saveGame(); },
   loadGame(){ return loadGame(); },
 };
