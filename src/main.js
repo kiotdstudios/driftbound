@@ -3183,13 +3183,14 @@ function update() {
   const boosting = shiftHeld;           // boost state tracks LIVE input (visuals + fuel end at once)
 
   let ax = 0, ay = 0, thrusting = false;
-  if (!braking) {
+  if (!braking && !_mapOpen) {
     // Thrust lerps between cruise and boost via ramp; drops to cruise instantly when boost ends.
     // Heavier ships accelerate slower (sub-linear, floored so they stay drivable).
+    // _mapOpen guard here covers all four directions — no per-line guards needed.
     const t = (THRUST + (BOOST_THRUST - THRUST) * ship.boostRamp) * massAccelMult();
     if (keys['KeyW'] || keys['ArrowUp'])    ay -= t;
     if (keys['KeyS'] || keys['ArrowDown'])  ay += t;
-    if (!_mapOpen && (keys['KeyA'] || keys['ArrowLeft']))  ax -= t;
+    if (keys['KeyA'] || keys['ArrowLeft'])  ax -= t;
     if (keys['KeyD'] || keys['ArrowRight']) ax += t;
     if (ax !== 0 && ay !== 0) { ax *= 0.7071; ay *= 0.7071; }
     thrusting = (ax !== 0 || ay !== 0);
@@ -4279,4 +4280,9 @@ window.__DB = {
   set diagMode(v){ diagMode = v; },
   get hudBounds(){ return _hudBounds; },
   set hudBounds(v){ _hudBounds = v; },
+  // Map state + per-frame accel — exposed for test harness only.
+  get mapOpen(){ return regionalMap.isOpen(); },
+  set mapOpen(v){ v ? regionalMap.open() : regionalMap.close(); },
+  get dbgAX(){ return _dbgAX; },
+  get dbgAY(){ return _dbgAY; },
 };
