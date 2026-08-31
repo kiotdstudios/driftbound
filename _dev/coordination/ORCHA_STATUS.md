@@ -26,6 +26,34 @@ checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: Integration Pass 03 (A2 + W2 merge into refactor/modular-core)
+- STATUS: COMPLETE — pushed to refactor/modular-core
+- BRANCH: refactor/modular-core (integration worktree — authorized for this pass by explicit Chief directive)
+- COMMIT: ca6de88 (refactor/modular-core @ 31ed323..ca6de88 — 4 commits: 7dd3289 merge A2, 32a4c02 merge W2, ba10a0d standing-rule doc, ca6de88 test-harness fix)
+- FILES CHANGED: (merge of A2) _dev/coordination/AKI_STATUS.md, _dev/cp2_docking_verify.mjs (new), _dev/e_interaction_regression.mjs, _dev/phase1_pod_assembly_verify.mjs, src/main.js, src/systems/docking.js (new); (merge of W2) _dev/coordination/ORCHA_STATUS.md, src/main.js, src/render/hud.js (new); (this pass, direct) _dev/coordination/CHIEF_DIRECTIVES.md, _dev/coordination/PROJECT_STATUS.md, _dev/coordination/INTEGRATION_QUEUE.md, _dev/coordination/DECISIONS.md, _dev/coordination/ORCHA_STATUS.md, _dev/e_interaction_regression.mjs, _dev/phase1_pod_assembly_verify.mjs
+
+- COMPLETION REPORT: Synced integration worktree to Chief-confirmed baseline `31ed323`. Verified both source checkpoints before merging: Aki's `agent/core-gameplay @ 73f21ef` (A2/CP2, reported COMPLETE + HOLDING in AKI_STATUS.md) and my own `agent/world-ui @ e6944ea` (W2, reported COMPLETE). Merged Aki's branch first (`git merge --no-ff`, zero conflicts), then mine (`git merge --no-ff`, auto-merged src/main.js, zero conflicts). Verified post-merge integrity: no duplicate top-level `function`/`const`/`let` declarations (0 found via full-file scan), both `hud.js`/`docking.js`/`main.js` syntax-valid, draw order (`hud.render → minimap.render → drawDevControls`) and update order (`update() → updateDocking(dt) → updateMining()`) both preserved correctly in the merged file. Ran the full combined regression suite (19 scripts) sequentially. Found a genuine bug in two SHARED test files (not gameplay code): `waitForDock()` polled `isDocking()` once and returned as soon as it read `false` — but immediately after `keyboard.press('KeyE')`, the game's rAF loop hadn't yet processed the E-edge into `startDocking()`, so the flag was still `false` because docking hadn't started, not because it had finished. Root-caused via isolated repro (confirmed `startDockingByPid()` called directly, or the same E-key flow with a short added wait, both worked correctly — proving the bug was in the test helper, not `src/systems/docking.js`/`src/main.js`). Checked in with Chief before acting since it touched a shared file outside strict integrator ownership; Chief approved Option 1 (fix the test) with the explicit requirement of an observed false→true→false lifecycle, no gameplay changes, no weakened assertions. Applied the identical fix to both files, re-ran the two previously-failing suites (both now clean), then re-ran the ENTIRE combined suite from scratch to confirm nothing else was disturbed. All green. Updated `INTEGRATION_QUEUE.md` (itemized entries 3-9 for every commit since `5fffc07`), `PROJECT_STATUS.md` (new approved HEAD, cycle status, completed systems, known-issues list), `DECISIONS.md` (#14 — new standing rule for async-flag test helpers, generalizing the root cause so it isn't rediscovered later), and `CHIEF_DIRECTIVES.md` (Chief's new standing checkpoint-report-format requirement, recorded earlier in this same session, commit `ba10a0d`). Did not edit `AKI_STATUS.md` (not my file).
+
+- TESTS: phase0_smoke PASS · cp2_docking_verify 30/30 PASS · hud_layout_regression 27/27 PASS (3 resolutions) · hud_zoom_regression PASS (0 transform leaks, 5 zoom levels) · phase0_controls_verify PASS · camera_roundtrip_verify 36/36 PASS · map_input_suppression_verify 18/18 PASS · phase0_mining_jitter_verify PASS · phase0_review_verify PASS · env_parallax_verify 18/18 PASS · boost_regression PASS · phase0_saveload_verify PASS (save/load roundtrip, ~50s active-play wait) · final_validation PASS (12/12 checklist items) · **phase1_pod_assembly_verify 23/23 PASS** (was 21/23 FAIL pre-fix) · **e_interaction_regression 25/25 PASS** (was 23/25 FAIL pre-fix). All run sequentially per DECISIONS.md #13.
+
+- FAILURES/WARNINGS (non-blocking, all pre-existing/documented, none introduced by this pass): `scale_validation.mjs` — 1 self-documented KNOWN STALE check (asteroid-scale-vs-ship comparison, intentionally reverted per DECISIONS.md #9; script does not gate on it). `pod_art_check.mjs` — reports "attached pods after E: 0" (soft `CHECK` status, does not `process.exit(1)`) because it uses its own hardcoded 500ms wait, pre-dates CP2's ~1.75s docking sequence, and was NOT in the Chief-approved fix scope (`waitForDock()` in the two named files only). `mining_zoom_regression.mjs`/`boost_regression.mjs` — print informational "hp unchanged" lines that are not part of either script's actual pass/fail assertion (gated on error-count only); pre-existing, unrelated to this merge.
+
+- KNOWN DELTAS: None in gameplay/rendering behavior. HUD row counts, camera round-trip, map suppression, mining, and save/load all match pre-merge baselines exactly.
+
+- KNOWN ISSUES: `pod_art_check.mjs`'s hardcoded 500ms wait and the mining-HP informational lines in `mining_zoom_regression.mjs`/`boost_regression.mjs` are candidates for a future test-harness cleanup directive (not urgent — none of them gate CI).
+
+- QUESTIONS FOR CHIEF: NONE.
+
+- DECISIONS NEEDED FROM CHIEF: NONE — the one decision this pass needed (Option 1 vs Option 2 on the `waitForDock()` fix) was already given and executed.
+
+- RECOMMENDED NEXT ACTION: Authorize the next Parallel Cycle (e.g. CP3 or further World/UI extraction work), or, if desired, a small follow-up directive to clean up the two non-blocking pre-existing test-harness quirks noted above (`pod_art_check.mjs`, mining-HP logging) — low priority, not required for green CI.
+
+- PUSHED TO GITHUB: Yes — refactor/modular-core @ ca6de88 (fast-forward from 31ed323; verified `origin/refactor/modular-core` == local HEAD post-push).
+
+- CURRENT HOLD/GO STATE: **HOLD.** Integration Pass 03 complete. Both feature branches (agent/core-gameplay, agent/world-ui) and the integration worktree all HOLD pending the next Chief directive.
+
+---
+
 ### DIRECTIVE ID: W2
 - STATUS: COMPLETE — pushed to agent/world-ui, awaiting Chief integration review
 - BRANCH: agent/world-ui

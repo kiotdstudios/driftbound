@@ -46,3 +46,11 @@ a code edit.
     decay-curve tests failing spuriously) that are environmental, not code
     regressions. Always retry a suspicious solo-vs-batch discrepancy before
     reporting a regression.
+14. Test helpers that poll an async game-state flag driven by keyboard
+    input (e.g. `isDocking()`) must require an OBSERVED
+    false → true → false lifecycle before returning "done" — never a
+    single instantaneous read. A `keyboard.press()` call returns before
+    the game's requestAnimationFrame loop has processed the resulting
+    input edge, so polling the flag immediately can read "false" because
+    the action never started, not because it finished. (See Integration
+    Pass 03 `waitForDock()` fix, `ca6de88`.)
