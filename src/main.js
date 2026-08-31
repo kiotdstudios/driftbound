@@ -1751,7 +1751,7 @@ function drawAttachedPods(cx, cy) {
     ctx.translate(csx, csy);
     ctx.rotate(a);
     const _spr = podRotations['south'];
-    const S = 52;
+    const S = POD_DISPLAY_SIZE; // CP3 fix: match world-pod/docking-anim scale, not legacy hardcode
     if (_spr && _spr.naturalWidth) {
       ctx.imageSmoothingEnabled = false;
       ctx.shadowColor = col; ctx.shadowBlur = 6;
@@ -3504,7 +3504,6 @@ function loop(now) {
 
   drawWorldPods(cx, cy);
   drawDockingPod(cx, cy);   // CP2: animate pod in-flight during docking sequence
-  drawAttachedPods(cx, cy);
   drawMiningLaser(cx, cy);
 
   drawOrePickups(cx, cy);
@@ -3539,6 +3538,11 @@ function loop(now) {
   applyWorldTransform(ctx);
   ctx.imageSmoothingEnabled = false;
   drawShip(cx, cy, now, speed);
+  // Attached pods render after the ship (not before) so a docked pod sits
+  // flush and visible against the hull instead of being painted over by
+  // the ship sprite drawn on top of it. Render-order fix only -- CP2 graph
+  // data (local_position / CONNECTOR_GAP) is untouched.
+  drawAttachedPods(cx, cy);
   restoreWorldTransform(ctx);
 
   // DEV transform-leak assertion: HUD must render in identity screen space.
