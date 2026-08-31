@@ -1,23 +1,37 @@
 /**
- * CP3b-2 — Attached pod render scale/position/orientation verification.
+ * CP3b-2 / CP3c — Attached pod render scale/position/orientation verification.
  *
  * History:
- *   CP3   (S=52 -> POD_DISPLAY_SIZE=96 + z-order fix) — fixed the pod being
- *         invisible behind the hull, but chief QA rejected the result:
- *         the pod still read as a tiny accessory, visually separated from
- *         the ship.
- *   CP3b-2 (this fix) — attached-pod render size is now derived from
- *         CONNECTOR_GAP (a measured CP2 graph constant) rather than a fixed
- *         nominal sprite size. See getAttachedPodRenderSize() in main.js for
- *         the full geometric derivation. No CP2 docking-logic or graph-data
- *         change; render-only.
+ *   CP3    (S=52 -> POD_DISPLAY_SIZE=96 + z-order fix) — fixed the pod being
+ *          invisible behind the hull, but chief QA rejected the result:
+ *          the pod still read as a tiny accessory, visually separated from
+ *          the ship.
+ *   CP3b-2 attached-pod render SIZE is derived from CONNECTOR_GAP (a
+ *          measured CP2 graph constant) rather than a fixed nominal sprite
+ *          size. Chief QA later confirmed the SIZE itself is now correct.
+ *   CP3c   (this fix) — chief QA found the connector PLACEMENT still wrong:
+ *          the pod rendered overlapping/on top of the hull instead of
+ *          flush outside it, because the CP2 graph's CONNECTOR_GAP (46
+ *          world-px) is smaller than the ship's own visible half-width
+ *          (~51 world-px) -- i.e. the raw graph local_position the OLD
+ *          code drew at sits inside the ship's own silhouette by
+ *          construction. Fix is render-time only (getNodeRenderOffset() /
+ *          getModuleRenderHalfWidth() in main.js): distance along the
+ *          existing connector direction is recomputed as
+ *          (parentHalfWidth + podHalfWidth), flush, zero unintended
+ *          overlap. shipAssembly / local_position / CONNECTOR_GAP (CP2
+ *          graph+save data) and pod render SCALE are all untouched.
  *
- * Per chief's explicit instruction, this test does NOT hardcode a pixel-
- * probe calibrated to one specific S value. Instead it measures, from the
- * live canvas, the actual rendered bounding-box ratio (pod visible width vs
- * ship visible width) and the connector edge distance/overlap, and asserts
- * those measured geometric properties satisfy the requirements:
- *   - flush against the connector, no floating gap
+ * Chief flagged the pre-CP3c "no visible background gap" check (scanning
+ * world-x 0..46 for zero background pixels) as INSUFFICIENT: overlapping
+ * sprites also produce zero background gap, so that check alone cannot
+ * distinguish "flush" from "overlapping". This version adds an explicit
+ * ship-only-vs-pod-only bounding-box measurement (by toggling the pod out
+ * of attachedPods and re-scanning) so overlap and flush-gap are checked
+ * as two independent, non-conflatable assertions:
+ *   - ship-only content bbox and pod-only-implied leading edge must not
+ *     overlap beyond a small intentional-art tolerance
+ *   - the two bounding boxes must still be flush (no floating background gap)
  *   - reads as a full module (bigger than the old rejected 96)
  *   - ship remains the dominant, recognizable shape (not swallowed)
  *   - moves/rotates rigidly with the ship
@@ -137,59 +151,94 @@ async function main() {
     strictEqual(node.local_position.y, 0,  `expected local y=0, got ${node.local_position.y}`);
   });
 
-  console.log('\n[CP3b-2] Attached-pod render — measured bounding-box ratio + connector edge distance');
+  console.log('\n[CP3c] Attached-pod render — expected flush geometry (from live measured half-widths)');
+
+  const shipHalfWidth = await page.evaluate(() => window.__DB.shipHalfWidthWorld);
+  const S             = await page.evaluate(() => window.__DB.attachedPodRenderSize);
+  const podHalfWidth  = S / 2;
+  const renderOffset  = await page.evaluate((pid) => window.__DB.getNodeRenderOffset(pid), pid);
+  const expectedFlushDist = shipHalfWidth + podHalfWidth;
+
+  await check('render offset uses flush distance (shipHalfWidth + podHalfWidth), not raw CONNECTOR_GAP local_position', async () => {
+    ok(shipHalfWidth !== null, 'shipHalfWidthWorld should be measurable once sprites are loaded');
+    ok(Math.abs(renderOffset.x - expectedFlushDist) < 1, `expected render offset x ~= ${expectedFlushDist} (shipHalfWidth ${shipHalfWidth} + podHalfWidth ${podHalfWidth}), got ${renderOffset.x}`);
+    ok(Math.abs(renderOffset.y) < 1, `expected render offset y ~= 0 for an E connector, got ${renderOffset.y}`);
+    ok(renderOffset.x > 46, `flush distance (${renderOffset.x}) must be greater than the raw graph CONNECTOR_GAP (46) -- otherwise this is the old overlap bug`);
+  });
+
+  console.log('\n[CP3c] Attached-pod render — independent ship-only vs pod-only bounding boxes (no unintended overlap)');
 
   // Ship-only content bounds, scanning the side AWAY from the connector
-  // (negative world-x), since the pod never extends that far.
-  const shipSide = await scanContentBounds(page, cx, cy, -70, -2);
+  // (negative world-x), since the pod never extends that far. Unaffected by
+  // the CP3c fix -- sanity check that the ship itself still reads correctly.
+  const shipSideAway = await scanContentBounds(page, cx, cy, -70, -2);
   await check('ship hull is visible on the side away from the connector (not swallowed)', async () => {
-    ok(shipSide.minX !== null, 'expected some ship content on the negative-x side, found none');
-  });
-  const shipHalfWidthMeasured = shipSide.minX !== null ? Math.abs(shipSide.minX) : null;
-
-  // Full content bounds across both ship+pod, scanning the connector side.
-  const podSide = await scanContentBounds(page, cx, cy, 2, 130);
-  await check('pod content is visible flush at/near the connector (no floating gap)', async () => {
-    ok(podSide.minX !== null && podSide.minX <= 10, `expected pod/ship content starting within 10px of connector approach, got minX=${podSide.minX}`);
-  });
-  const podFarEdge = podSide.maxX; // world-x offset of the pod's outermost visible pixel
-
-  await check('no visible background gap between ship and pod along the connector axis (offsets 0..46)', async () => {
-    let gapPixels = 0;
-    for (let wx = 0; wx <= 46; wx += 2) {
-      const rgb = await pixelAt(page, cx + wx, cy);
-      if (!differsFromBackground(rgb)) gapPixels++;
-    }
-    ok(gapPixels === 0, `expected zero background-colored pixels between ship and pod, found ${gapPixels}`);
+    ok(shipSideAway.minX !== null, 'expected some ship content on the negative-x side, found none');
   });
 
-  const podHalfWidthMeasured = podFarEdge !== null ? (podFarEdge - 46) : null;
+  // Ship-ONLY bounding box on the CONNECTOR side: temporarily remove the pod
+  // from attachedPods (draw-only toggle; does not touch shipAssembly/graph
+  // data) and measure where the ship's own content actually ends. This is
+  // the independent "ship bbox" half of chief's requested overlap check.
+  const savedPods = await page.evaluate(() => window.__DB.attachedPods.splice(0));
+  const shipOnlySide = await scanContentBounds(page, cx, cy, 2, Math.round(expectedFlushDist + podHalfWidth + 20));
+  await page.evaluate((saved) => { window.__DB.attachedPods.push(...saved); }, savedPods);
+  await page.waitForTimeout(50);
+  const shipOnlyMaxX = shipOnlySide.maxX; // outermost ship-only pixel on the connector side
+
+  await check('ship-only content bound measured (pod temporarily hidden)', async () => {
+    ok(shipOnlyMaxX !== null, 'expected ship content on the connector side even with the pod removed');
+  });
+
+  // Pod's own leading (near) edge, measured with BOTH ship and pod rendered:
+  // first non-background pixel found beyond the ship-only bound.
+  const ART_OVERLAP_TOLERANCE = 4; // px allowance for intentional connector-nub art, not a real hull/pod overlap
+  const podLeadingEdgeScan = await scanContentBounds(page, cx, cy, (shipOnlyMaxX ?? 0) - ART_OVERLAP_TOLERANCE, Math.round(expectedFlushDist + podHalfWidth + 20));
+  const podLeadingEdge = podLeadingEdgeScan.minX;
+
+  await check('NO unintended core/pod bounding-box overlap: pod-visible content does not begin before the ship-only bound (beyond small art tolerance)', async () => {
+    ok(podLeadingEdge !== null, 'expected some content on the connector side with the pod attached');
+    ok(podLeadingEdge >= shipOnlyMaxX - ART_OVERLAP_TOLERANCE,
+      `pod content starts at world-x=${podLeadingEdge}, but ship-only content already extends to ${shipOnlyMaxX} -- ` +
+      `this is a bounding-box overlap greater than the ${ART_OVERLAP_TOLERANCE}px intentional-art tolerance (the exact CP3 bug chief flagged)`);
+  });
+
+  await check('flush: no floating background gap between the ship-only bound and the pod leading edge', async () => {
+    const gap = podLeadingEdge - shipOnlyMaxX;
+    ok(gap <= ART_OVERLAP_TOLERANCE + 2, `expected pod to sit flush against the ship (gap <= ~${ART_OVERLAP_TOLERANCE + 2}px), measured gap=${gap}px`);
+  });
+
+  const podFarEdgeScan = await scanContentBounds(page, cx, cy, 2, Math.round(expectedFlushDist + podHalfWidth + 20));
+  const podFarEdge = podFarEdgeScan.maxX;
+  const podHalfWidthMeasured = podFarEdge !== null ? (podFarEdge - renderOffset.x) : null;
   await check('pod reads as a substantial module, not a tiny accessory (measured half-width > old-rejected ~35px)', async () => {
     ok(podHalfWidthMeasured !== null && podHalfWidthMeasured > 40, `expected pod half-width > 40px (old rejected fix measured ~35px), got ${podHalfWidthMeasured}`);
   });
 
-  await check('ship remains the dominant visible shape (measured ship half-width still >= 30px on its own side)', async () => {
-    ok(shipHalfWidthMeasured !== null && shipHalfWidthMeasured >= 30, `expected ship still clearly visible (half-width >= 30px) on the side away from the pod, got ${shipHalfWidthMeasured}`);
+  await check('ship remains the dominant visible shape (measured ship-only half-width still >= 30px)', async () => {
+    ok(shipOnlyMaxX !== null && shipOnlyMaxX >= 30, `expected ship still clearly visible (half-width >= 30px), got ${shipOnlyMaxX}`);
   });
 
-  await check('rendered attachedPodRenderSize is bigger than the old rejected POD_DISPLAY_SIZE=96, and not a raw hardcoded constant', async () => {
-    const S = await page.evaluate(() => window.__DB.attachedPodRenderSize);
+  await check('pod scale is UNCHANGED by this fix: S stays > 96 (old rejected accessory size) and < 145 (would swallow the ship), same bounds as CP3b-2', async () => {
     ok(S > 96, `expected S > 96 (old rejected accessory size), got ${S}`);
     ok(S < 145, `expected S to stay well short of a 1:1 ship-size match (~152, which swallows the ship), got ${S}`);
   });
 
   console.log('\n[CP3b-2] Attached-pod render — rigid rotation with ship heading');
 
+  // Rotation math is unaffected by CP3c (still shipHeadingAngle() * rotLocal),
+  // but the probe points below must use the NEW flush offset, not the old
+  // (inside-hull) magic numbers -- those no longer land on the pod at all.
   await page.evaluate(() => { window.__DB.ship.dir = 'east'; });
   await page.waitForTimeout(150);
 
   await check('after heading change to east, pod swings to below the ship (moves rigidly with ship)', async () => {
-    const rgb = await pixelAt(page, cx, cy + 40);
+    const rgb = await pixelAt(page, cx, cy + Math.round(renderOffset.x));
     ok(differsFromBackground(rgb), `expected non-background sprite content at rotated position, got [${rgb.slice(0,3)}]`);
   });
 
   await check('old (pre-rotation) connector-side position returns to background (confirms it truly moved, not duplicated)', async () => {
-    const rgb = await pixelAt(page, cx + 100, cy);
+    const rgb = await pixelAt(page, cx + Math.round(renderOffset.x), cy);
     ok(!differsFromBackground(rgb), `expected background at old position after rotating, but found content: [${rgb.slice(0,3)}]`);
   });
 
@@ -197,7 +246,7 @@ async function main() {
   await page.waitForTimeout(150);
 
   await check('reverting heading to north restores content at the connector side', async () => {
-    const rgb = await pixelAt(page, cx + 40, cy);
+    const rgb = await pixelAt(page, cx + Math.round(renderOffset.x), cy);
     ok(differsFromBackground(rgb), `expected sprite content restored, got [${rgb.slice(0,3)}]`);
   });
 

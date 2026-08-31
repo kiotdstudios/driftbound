@@ -93,7 +93,12 @@ async function main() {
     });
   }, shipPos);
 
-  const apWorld = { x: shipPos.x + 46, y: shipPos.y };
+  // CP3c: attached-pod hover target now tracks the flush render offset
+  // (getNodeRenderOffset), not the raw CONNECTOR_GAP graph value -- the pod
+  // moved outside the hull, so the old (+46,0) probe point no longer lands
+  // on it.
+  const apRenderOffset = await page.evaluate((pid) => window.__DB.getNodeRenderOffset(pid), apPid);
+  const apWorld = { x: shipPos.x + apRenderOffset.x, y: shipPos.y + apRenderOffset.y };
   const wpWorld = { x: shipPos.x + 400, y: shipPos.y };
   const astWorld = { x: shipPos.x - 400, y: shipPos.y };
   // Kept well within the viewport at every zoom level (max 1.30x * 150 = 195px

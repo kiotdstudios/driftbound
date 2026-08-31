@@ -289,15 +289,13 @@ function _contentBBox(img) {
 // loaded yet, or if the ship/pod geometry doesn't fit the assumption above.
 function getAttachedPodRenderSize() {
   if (_attachedPodRenderSize != null) return _attachedPodRenderSize;
-  const shipImg = rotations['south'];
-  const podImg  = podRotations['south'];
-  if (!shipImg || !shipImg.naturalWidth || !podImg || !podImg.naturalWidth) return POD_DISPLAY_SIZE;
+  const shipHalfWidthWorld = _shipHalfWidthWorld();
+  const podImg = podRotations['south'];
+  if (shipHalfWidthWorld == null || !podImg || !podImg.naturalWidth) return POD_DISPLAY_SIZE;
 
-  const shipBBox = _contentBBox(shipImg);
-  const podBBox  = _contentBBox(podImg);
-  if (!shipBBox || !podBBox || podBBox.width <= 0) return POD_DISPLAY_SIZE;
+  const podBBox = _contentBBox(podImg);
+  if (!podBBox || podBBox.width <= 0) return POD_DISPLAY_SIZE;
 
-  const shipHalfWidthWorld = (shipBBox.width / 2) * DISPLAY_SCALE;
   // Sanity-check the assumption the formula relies on (connector point
   // inside ship silhouette); if it doesn't hold for future sprite swaps,
   // fall back rather than produce a nonsensical size.
@@ -309,6 +307,61 @@ function getAttachedPodRenderSize() {
   const podScale = (podHalfWidthWorld * 2) / podBBox.width;
   _attachedPodRenderSize = podImg.naturalWidth * podScale;
   return _attachedPodRenderSize;
+}
+
+// Memoized measurement of the ship's own visible sprite half-width, in
+// world-px. Split out of getAttachedPodRenderSize() (CP3b-2) so the SAME
+// scale formula/output is reused, unchanged, by the connector-placement fix
+// below (CP3c) -- this function changes NO pod scale, it only exposes a
+// value that already existed inline.
+let _shipHalfWidthWorldCache = null;
+function _shipHalfWidthWorld() {
+  if (_shipHalfWidthWorldCache != null) return _shipHalfWidthWorldCache;
+  const shipImg = rotations['south'];
+  if (!shipImg || !shipImg.naturalWidth) return null;
+  const shipBBox = _contentBBox(shipImg);
+  if (!shipBBox) return null;
+  _shipHalfWidthWorldCache = (shipBBox.width / 2) * DISPLAY_SCALE;
+  return _shipHalfWidthWorldCache;
+}
+
+// -- CP3c: connector-placement fix -------------------------------------------
+// CP3b-2 fixed pod SCALE but (per chief QA) left pods overlapping the hull:
+// the connector point itself (CONNECTOR_GAP, CP2 graph data) sits INSIDE the
+// ship's own silhouette by construction (46 < ~51 world-px ship half-width),
+// so anything drawn at the raw graph local_position necessarily overlaps.
+//
+// Fix is render-time ONLY: getNodeRenderOffset() walks the same shipAssembly
+// parent chain the graph already encodes, borrows the graph's CONNECTOR
+// DIRECTION (never its distance), and substitutes a flush distance of
+// (parentHalfWidth + thisHalfWidth) at every hop. shipAssembly, local_position
+// and CONNECTOR_GAP itself are never written to -- the CP2 structural/save
+// layer is untouched, exactly as directed ("fix connector placement math
+// only"). Pod scale (getAttachedPodRenderSize) is also untouched.
+function getModuleRenderHalfWidth(modId) {
+  if (!modId || modId === 'core') {
+    const w = _shipHalfWidthWorld();
+    return w != null ? w : POD_DISPLAY_SIZE / 2;
+  }
+  // NOTE: only one pod render size exists today (getAttachedPodRenderSize()
+  // is global, not per-type). If per-type pod sizes are ever added, this
+  // must look up modId's own type size instead of reusing the global one.
+  return getAttachedPodRenderSize() / 2;
+}
+
+function getNodeRenderOffset(nodeId) {
+  if (!nodeId || nodeId === 'core') return { x: 0, y: 0 };
+  const node = shipAssembly[nodeId];
+  if (!node) return { x: 0, y: 0 };
+  const parentId = node.parent || 'core';
+  const parent = shipAssembly[parentId] || shipAssembly.core;
+  const parentOffset = getNodeRenderOffset(parentId);
+  const dx = node.local_position.x - parent.local_position.x;
+  const dy = node.local_position.y - parent.local_position.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const dirX = dx / dist, dirY = dy / dist;
+  const flushDist = getModuleRenderHalfWidth(parentId) + getModuleRenderHalfWidth(nodeId);
+  return { x: parentOffset.x + dirX * flushDist, y: parentOffset.y + dirY * flushDist };
 }
 
 
@@ -1576,11 +1629,15 @@ function getInteractionCandidates() {
   }
 
   for (const p of attachedPods) {
-    const node = shipAssembly[p.mod_id || p.pid];
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
     if (!node) continue;
-    const cp = rotLocal(node.local_position.x, node.local_position.y, a);
+    // CP3c: hover target must track the flush render position, not the raw
+    // (inside-hull) graph local_position -- see getNodeRenderOffset().
+    const cOff = getNodeRenderOffset(modId);
+    const cp = rotLocal(cOff.x, cOff.y, a);
     candidates.push({
-      type: 'attached_pod', id: p.mod_id || p.pid,
+      type: 'attached_pod', id: modId,
       worldX: ship.worldX + cp.x, worldY: ship.worldY + cp.y,
       hitRadius: getAttachedPodRenderSize() / 2, // matches the CP3b visual scale fix
       ref: p,
@@ -1726,10 +1783,14 @@ function drawDockingPod(cx, cy) {
   // slotModLocalX/Y are fresh lookups from the assembly at time of getDockingAnimData() call.
   const lx     = anim.slotModLocalX;
   const ly     = anim.slotModLocalY;
-  // Add one connector-gap step in the slot direction so pod ends at child center
   const dv     = DIR_VEC[anim.slotConnDir] || { x: 0, y: 1 };
-  const clx    = lx + dv.x * CONNECTOR_GAP;
-  const cly    = ly + dv.y * CONNECTOR_GAP;
+  // CP3c: target the same flush edge-to-edge distance the pod will actually
+  // render at once attached (getNodeRenderOffset()), not the raw
+  // CONNECTOR_GAP graph step -- otherwise the pod would animate INTO the
+  // hull, then visually "pop" outward the instant LOCK commits.
+  const flushDist = getModuleRenderHalfWidth(anim.slotModId) + getAttachedPodRenderSize() / 2;
+  const clx    = lx + dv.x * flushDist;
+  const cly    = ly + dv.y * flushDist;
   const tWorldX = ship.worldX + (clx * cos_a - cly * sin_a);
   const tWorldY = ship.worldY + (clx * sin_a + cly * cos_a);
 
@@ -1881,11 +1942,15 @@ function drawAttachedPods(cx, cy) {
 
   // ── mechanical struts (parent -> child), drawn behind the pods ──
   for (const p of attachedPods) {
-    const node = shipAssembly[p.mod_id || p.pid];
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
     if (!node) continue;
-    const parent = shipAssembly[node.parent] || shipAssembly.core;
-    const cp = rotLocal(node.local_position.x, node.local_position.y, a);
-    const pp = rotLocal(parent.local_position.x, parent.local_position.y, a);
+    // CP3c: flush render offset (direction from graph, distance recomputed)
+    // -- NOT the raw local_position, which sits inside the parent's hull.
+    const cOff = getNodeRenderOffset(modId);
+    const pOff = getNodeRenderOffset(node.parent || 'core');
+    const cp = rotLocal(cOff.x, cOff.y, a);
+    const pp = rotLocal(pOff.x, pOff.y, a);
     ctx.save();
     ctx.strokeStyle = (p.color || '#38bdf8') + 'aa';
     ctx.lineWidth = 3;
@@ -1895,9 +1960,12 @@ function drawAttachedPods(cx, cy) {
 
   // ── pod bodies, each fixed in the ship frame and rotated with the ship ──
   for (const p of attachedPods) {
-    const node = shipAssembly[p.mod_id || p.pid];
+    const modId = p.mod_id || p.pid;
+    const node = shipAssembly[modId];
     if (!node) continue;
-    const cp  = rotLocal(node.local_position.x, node.local_position.y, a);
+    // CP3c: flush render offset, see comment above.
+    const cOff = getNodeRenderOffset(modId);
+    const cp  = rotLocal(cOff.x, cOff.y, a);
     const csx = cx + cp.x, csy = cy + cp.y;
     const col = p.color || '#38bdf8';
     ctx.save();
@@ -4518,4 +4586,8 @@ window.__DB = {
   get hoveredTarget(){ return hoveredTarget; },
   getInteractionCandidates(){ return getInteractionCandidates(); },
   get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
+  // -- CP3c connector-placement test bridge --
+  get shipHalfWidthWorld(){ return _shipHalfWidthWorld(); },
+  getNodeRenderOffset(nodeId){ return getNodeRenderOffset(nodeId); },
+  getModuleRenderHalfWidth(modId){ return getModuleRenderHalfWidth(modId); },
 };
