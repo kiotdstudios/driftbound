@@ -1570,8 +1570,9 @@ function drawDockingPod(cx, cy) {
   const cos_a  = Math.cos(angle), sin_a = Math.sin(angle);
 
   // Compute target connector world position (module local → rotated → world)
-  const lx     = anim.slotModLocalPos.x;
-  const ly     = anim.slotModLocalPos.y;
+  // slotModLocalX/Y are fresh lookups from the assembly at time of getDockingAnimData() call.
+  const lx     = anim.slotModLocalX;
+  const ly     = anim.slotModLocalY;
   // Add one connector-gap step in the slot direction so pod ends at child center
   const dv     = DIR_VEC[anim.slotConnDir] || { x: 0, y: 1 };
   const clx    = lx + dv.x * CONNECTOR_GAP;

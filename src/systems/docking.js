@@ -1,17 +1,22 @@
 // ─── CP2: Physical Docking State Machine ──────────────────────────────────────
 // Replaces the instant-attach in tryClaimWorldPod with a staged sequence:
-//   IDLE → ALIGNING (500 ms) → PULLING_IN (900 ms) → LOCKING (350 ms) → IDLE
-//   ABORTING: cancel mid-dock, refund ore, restore connector to free.
+//   IDLE → ALIGNING (500 ms) → PULLING_IN (900 ms) → LOCKING (350 ms) → COMPLETE → IDLE
+//   ABORTING: cancel mid-dock, refund ore, restore connector, return to IDLE.
 //
 // Resources (ore) and the connector slot are reserved at ALIGNING start.
 // The actual graph mutation (shipAssembly update) happens only at LOCK commit.
 // (DECISIONS.md rule #6: reserve before LOCK, mutate at LOCK — not before.)
+//
+// All docking state uses stable IDs (strings), never raw object references.
+// Objects are looked up fresh from context getters at each use site.
 
 export const DOCK_STATE = Object.freeze({
   IDLE:       'IDLE',
   ALIGNING:   'ALIGNING',
   PULLING_IN: 'PULLING_IN',
   LOCKING:    'LOCKING',
+  COMPLETE:   'COMPLETE',
+  ABORTING:   'ABORTING',
 });
 
 const TIMING = {
@@ -22,13 +27,23 @@ const TIMING = {
 
 let _ctx = null;
 
+// All fields are stable IDs (strings) or primitives — no raw object refs.
 const _s = {
-  phase:  DOCK_STATE.IDLE,
-  elapsed: 0,
-  pod:    null,   // reference to the worldPod being docked
-  slot:   null,   // { mod, conn } — reserved connector
-  pid:    null,   // pod_instance_id shorthand
+  phase:      DOCK_STATE.IDLE,
+  elapsed:    0,
+  podPid:     null,   // pid of the world pod being docked
+  slotModId:  null,   // pod_instance_id of the module hosting the reserved connector
+  slotConnId: null,   // connector id ('N', 'E', 'S', 'W')
 };
+
+// ── Context helpers — always look up fresh, never cache the object ref ────────
+
+function _getPod()  { return _ctx.getWorldPods().find(p => p.pid === _s.podPid) || null; }
+function _getMod()  { return _ctx.getShipAssembly()[_s.slotModId] || null; }
+function _getConn() {
+  const mod = _getMod();
+  return mod ? (mod.available_connectors.find(c => c.id === _s.slotConnId) || null) : null;
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -37,41 +52,50 @@ export function initDocking(context) {
 }
 
 export function isDocking() {
-  return _s.phase !== DOCK_STATE.IDLE;
+  // Active only during the three animation phases; COMPLETE/ABORTING are flush-to-IDLE.
+  return _s.phase === DOCK_STATE.ALIGNING
+      || _s.phase === DOCK_STATE.PULLING_IN
+      || _s.phase === DOCK_STATE.LOCKING;
 }
 
-// Safe snapshot for tests and __DB bridge.
+// Safe snapshot for tests and __DB bridge — IDs only, no object refs.
 export function getDockingState() {
   return {
     phase:           _s.phase,
     elapsed:         _s.elapsed,
-    pod_instance_id: _s.pid,
-    slotMod:         _s.slot ? _s.slot.mod.pod_instance_id : null,
-    slotConn:        _s.slot ? _s.slot.conn.id             : null,
+    pod_instance_id: _s.podPid,
+    slotMod:         _s.slotModId,
+    slotConn:        _s.slotConnId,
   };
 }
 
-// Rendering data for main.js drawDockingPod — null when not docking.
+// Rendering data for main.js drawDockingPod — null when inactive.
+// Connector world target is recomputed by the caller each frame using ship transform.
 export function getDockingAnimData() {
-  if (_s.phase === DOCK_STATE.IDLE) return null;
-  const pod  = _s.pod;
-  const slot = _s.slot;
-  if (!pod || !slot) return null;
+  if (!isDocking()) return null;
+
+  // Look up pod position fresh — pod stays in worldPods until LOCK commit.
+  const pod  = _getPod();
+  const mod  = _getMod();
+  const conn = _getConn();
+  if (!pod || !mod || !conn) return null;
 
   let progress = 0;
-  if (_s.phase === DOCK_STATE.ALIGNING)   progress = Math.min(1, _s.elapsed / TIMING.ALIGNING);
+  if (_s.phase === DOCK_STATE.ALIGNING)        progress = Math.min(1, _s.elapsed / TIMING.ALIGNING);
   else if (_s.phase === DOCK_STATE.PULLING_IN) progress = Math.min(1, _s.elapsed / TIMING.PULLING_IN);
-  else progress = 1.0; // LOCKING — at target
+  else                                          progress = 1.0; // LOCKING — at target
 
   return {
-    pid:          pod.pid,
-    type:         pod.type,
-    phase:        _s.phase,
+    pid:             pod.pid,
+    type:            pod.type,
+    phase:           _s.phase,
     progress,
-    srcX:         pod.worldX,
-    srcY:         pod.worldY,
-    slotModLocalPos: slot.mod.local_position,   // {x, y} ship-local
-    slotConnDir:     slot.conn.dir,             // 'north'/'east'/'south'/'west'
+    srcX:            pod.worldX,   // current world position (fresh lookup)
+    srcY:            pod.worldY,
+    // Caller recomputes world target from these + ship transform each frame:
+    slotModLocalX:   mod.local_position.x,
+    slotModLocalY:   mod.local_position.y,
+    slotConnDir:     conn.dir,
   };
 }
 
@@ -99,31 +123,36 @@ export function startDocking(pod) {
   }
 
   // Reserve resources and connector before any graph mutation.
-  ship.ore          -= POD_ATTACH_COST;
-  slot.conn.free     = false;
-  slot.conn.state    = 'reserved';
+  ship.ore           -= POD_ATTACH_COST;
+  slot.conn.free      = false;
+  slot.conn.state     = 'reserved';
 
-  _s.phase   = DOCK_STATE.ALIGNING;
-  _s.elapsed = 0;
-  _s.pod     = pod;
-  _s.slot    = slot;
-  _s.pid     = pod.pid;
+  // Store only stable IDs — no raw object refs.
+  _s.phase      = DOCK_STATE.ALIGNING;
+  _s.elapsed    = 0;
+  _s.podPid     = pod.pid;
+  _s.slotModId  = slot.mod.pod_instance_id;
+  _s.slotConnId = slot.conn.id;
 
   return true;
 }
 
-// Cancel docking: refund ore, restore connector, reset state.
+// Cancel docking: refund ore, restore connector, transition through ABORTING → IDLE.
 export function abortDocking(_reason) {
-  if (_s.phase === DOCK_STATE.IDLE) return;
+  if (!isDocking()) return;
+
+  _s.phase = DOCK_STATE.ABORTING;
 
   const { ship, POD_ATTACH_COST, showToast } = _ctx;
 
   ship.ore += POD_ATTACH_COST;
 
-  if (_s.slot) {
-    _s.slot.conn.free  = true;
-    _s.slot.conn.state = 'free';
-    // connected_to is only written at commit, so no cleanup needed there.
+  // Restore connector via fresh lookup — never cache object refs.
+  const conn = _getConn();
+  if (conn) {
+    conn.free  = true;
+    conn.state = 'free';
+    // connected_to is written only at LOCK commit, so no cleanup needed here.
   }
 
   showToast('DOCKING ABORTED', '#ef4444');
@@ -132,7 +161,7 @@ export function abortDocking(_reason) {
 
 // Called every frame from loop() with dt in ms.
 export function updateDocking(dt) {
-  if (_s.phase === DOCK_STATE.IDLE) return;
+  if (!isDocking()) return;
 
   _s.elapsed += dt;
 
@@ -150,22 +179,34 @@ export function updateDocking(dt) {
 // ── Private ───────────────────────────────────────────────────────────────────
 
 function _commitDock() {
+  // Transition to COMPLETE; then flush state at end of this call.
+  _s.phase = DOCK_STATE.COMPLETE;
+
   const {
     getShipAssembly, getPOD_TYPES, makeModuleNode,
     removeWorldPodByPid, addAttachedPod, applyCargoBonus,
     saveGame, showToast, spawnLockParticles, addCameraShake,
   } = _ctx;
 
-  const pod          = _s.pod;
-  const slot         = _s.slot;
-  const podType      = getPOD_TYPES()[pod.type] || {};
+  // Fresh lookups — we stored IDs, not refs.
+  const pod          = _getPod();
+  const mod          = _getMod();
+  const conn         = _getConn();
   const shipAssembly = getShipAssembly();
 
+  if (!pod || !mod || !conn) {
+    // Guard against edge case where worldPod disappeared during docking (shouldn't happen).
+    _reset();
+    return;
+  }
+
+  const podType = getPOD_TYPES()[pod.type] || {};
+
   // Graph mutation: build child node, wire into assembly.
-  const node = makeModuleNode(pod.pid, pod.type, slot.mod, slot.conn);
-  shipAssembly[pod.pid]               = node;
-  slot.conn.state                     = 'connected';
-  slot.mod.connected_to[slot.conn.id] = pod.pid;
+  const node = makeModuleNode(pod.pid, pod.type, mod, conn);
+  shipAssembly[pod.pid]            = node;
+  conn.state                       = 'connected';
+  mod.connected_to[conn.id]        = pod.pid;
 
   // Remove from world list; add to legacy attached list.
   removeWorldPodByPid(pod.pid);
@@ -173,7 +214,7 @@ function _commitDock() {
   applyCargoBonus(pod.type);
 
   showToast(
-    'POD DOCKED  ' + slot.mod.pod_instance_id.toUpperCase() + '\u00B7' + slot.conn.id +
+    'POD DOCKED  ' + mod.pod_instance_id.toUpperCase() + '\u00B7' + conn.id +
     '  (+' + (podType.mass || 0) + ' MASS)',
     '#38bdf8'
   );
@@ -186,9 +227,9 @@ function _commitDock() {
 }
 
 function _reset() {
-  _s.phase   = DOCK_STATE.IDLE;
-  _s.elapsed = 0;
-  _s.pod     = null;
-  _s.slot    = null;
-  _s.pid     = null;
+  _s.phase      = DOCK_STATE.IDLE;
+  _s.elapsed    = 0;
+  _s.podPid     = null;
+  _s.slotModId  = null;
+  _s.slotConnId = null;
 }
