@@ -30,6 +30,27 @@ your implementation checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: A2 / CP2-final — Safe release on mid-dock invalidation
+- STATUS: COMPLETE (final safety correction)
+- BRANCH: agent/core-gameplay
+- COMMIT: d587b4f
+- FILES CHANGED: src/systems/docking.js (3 edits), _dev/cp2_docking_verify.mjs (+4 tests, 30/30)
+- IMPLEMENTATION SUMMARY: If _getPod(), _getMod(), or _getConn() becomes null during an active dock, the system now routes through _safeRelease() instead of calling raw _reset().
+  Problem: Two sites called _reset() directly on null-lookup failure — updateDocking() (per-tick validity check, added new) and _commitDock() null guard. This abandoned any reserved ore and left the connector in 'reserved' state forever.
+  Fix (3 edits to docking.js):
+  1. Added _safeRelease() private function: restores _s.reservedOre to ship.ore (if > 0), frees the connector if still in 'reserved' state (conn.free=true, conn.state='free'), then calls _reset(). Safe to call from any phase; does not depend on isDocking() being true.
+  2. updateDocking() validity guard (new): at the top of every tick, if _getPod()||_getMod()||_getConn() returns null while isDocking(), call showToast('DOCKING ABORTED') + _safeRelease() and return. Handles the case where an external system removes a pod, module, or connector mid-animation.
+  3. _commitDock() null guard: was calling _reset() directly. Now calls showToast + _safeRelease(). Also moved _s.phase = DOCK_STATE.COMPLETE assignment to AFTER the null check, so COMPLETE is only set when all refs are confirmed valid.
+- TEST RESULTS: cp2_docking_verify.mjs 30/30 PASS (+4 new: mid-dock invalidation ore restored, connector freed, graph not mutated, phase IDLE) | map_input_suppression_verify.mjs 18/18 PASS | e_interaction_regression.mjs 25/25 PASS | phase1_pod_assembly_verify.mjs 23/23 PASS | phase0_smoke.mjs PASS
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0
+- KNOWN DELTAS: None
+- KNOWN WARNINGS: None
+- PUSHED TO GITHUB: YES — 78de4d0..d587b4f → agent/core-gameplay
+- QUESTIONS FOR CHIEF: None — HOLDING for next directive
+
+---
+
 ### DIRECTIVE ID: A2 / CP2 — REWORK PASS 2 (ore reservation model)
 - STATUS: COMPLETE (rework 2)
 - BRANCH: agent/core-gameplay
