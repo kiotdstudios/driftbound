@@ -170,6 +170,49 @@ per-agent status logs are the historical/discovery record that feeds them.
   - Existing CP2 docking, assembly, interaction, hover, map-input, smoke, and CP3 render regressions must pass sequentially. Report any known timing flake separately and rerun it in isolation before classifying it as environmental.
 - **STOP CONDITION:** Write the complete checkpoint to `AKI_STATUS.md`, including final commit hash and explicit pushed confirmation; commit and push **only** to `agent/core-gameplay`; then HOLD for Chief visual review. Do not self-integrate.
 
+---
+
+## PARALLEL CYCLE 04 — Chief-authorized 2026-08-31
+
+Both agents begin from approved integration baseline `refactor/modular-core @ 215ef49`.
+Each agent syncs that baseline into its own clean feature branch before editing.
+Neither agent edits the other's files, touches the integration worktree, or
+self-integrates. Both HOLD after pushing their checkpoint.
+
+## DIRECTIVE: A3 — Extract mining system module
+- **ASSIGNED TO:** Aki / Core Gameplay
+- **BRANCH:** `agent/core-gameplay`
+- **BASELINE:** `refactor/modular-core @ 215ef49`
+- **STATUS:** GO
+- **OBJECTIVE:** Extract the existing mining gameplay state/update behavior from `src/main.js` into `src/systems/mining.js` using an explicit initialization/state interface. Behavior-preserving modularization only; do not redesign mining.
+- **REQUIREMENTS:**
+  - Move mining target acquisition, mining cadence/damage, resource-drop mutation, and mining lifecycle state into the module where practical.
+  - Keep rendering concerns out of the gameplay module; expose only the state needed by the existing beam/HUD presentation.
+  - Preserve E-action resolver priority, range, timing, loot outcomes, multiplayer ownership boundaries, save behavior, and the `window.__DB` test contract.
+  - No new balance constants, key bindings, effects, or user-visible behavior.
+  - Use stable IDs/references consistent with existing architecture; avoid a closure back into `main.js` except through an explicit injected context API.
+- **ALLOWED FILES / OWNERSHIP:** new `src/systems/mining.js`; minimal import/initialization/update wiring in `src/main.js`; mining-specific test additions or updates; `AKI_STATUS.md`; `TEAM_NOTES.md` only for cross-agent findings.
+- **DO NOT TOUCH:** `src/render/*`, HUD/map/minimap/dev-controls presentation, docking/assembly geometry, pod art or PNG files, save schema, Orcha status/files, integration worktree.
+- **ACCEPTANCE TESTS:** Mining behavior at in/out-of-range boundaries; cadence/damage and drop behavior; E-action priority with pods; map/input suppression; multiplayer-safe ownership assumptions; existing smoke, interaction, assembly, docking, camera, save/load, and mining regressions. Run Playwright suites sequentially.
+- **STOP CONDITION:** Complete the Chief checkpoint format in `AKI_STATUS.md`, commit and push only `agent/core-gameplay`, then HOLD. Do not integrate.
+
+## DIRECTIVE: W3 — Extract dev-controls and diagnostics presentation
+- **ASSIGNED TO:** Orcha / World & UI
+- **BRANCH:** `agent/world-ui`
+- **BASELINE:** `refactor/modular-core @ 215ef49`
+- **STATUS:** GO
+- **OBJECTIVE:** Extract the existing dev-controls panel and diagnostics overlay rendering from `src/main.js` into `src/render/devControls.js` with explicit state input. Behavior-preserving modularization only; no redesign.
+- **REQUIREMENTS:**
+  - Module owns `drawDevControls` and `drawDiagnostics` presentation and their local presentation helpers/constants.
+  - Consume all gameplay/debug information through an explicit render-state object; no closures into `main.js` and no gameplay mutation.
+  - Preserve F2 behavior, labels, bounds, colors, screen-space placement, transform safety, and draw order.
+  - Preserve `window.__DB.diagMode` and all existing diagnostics/test observability contracts through minimal orchestration wiring.
+  - No visual restyling, layout tuning, new controls, or gameplay changes.
+- **ALLOWED FILES / OWNERSHIP:** new `src/render/devControls.js`; minimal import/instantiation/call-site wiring in `src/main.js`; diagnostics/dev-controls test additions or updates; `ORCHA_STATUS.md`; `TEAM_NOTES.md` only for cross-agent findings.
+- **DO NOT TOUCH:** mining/interactions/docking/assembly/movement/save logic, HUD/map/minimap behavior, pod art or PNG files, Aki status/files, integration worktree.
+- **ACCEPTANCE TESTS:** Diagnostics toggle and observability; screen-space/transform safety across all zooms; HUD→minimap→dev-controls draw order; HUD layout/zoom, camera round-trip, map, interaction, assembly, docking, and smoke regressions. Run Playwright suites sequentially.
+- **STOP CONDITION:** Complete the Chief checkpoint format in `ORCHA_STATUS.md`, commit and push only `agent/world-ui`, then HOLD. Do not integrate.
+
 ## Directive Template (for Chief use)
 
 ```

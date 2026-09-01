@@ -21,9 +21,9 @@ coordination checkpoint `cd1a6cf`. See `INTEGRATION_QUEUE.md`.
 merge had one documentation-only add/add conflict in `TEAM_NOTES.md`; both
 histories were preserved. Production code auto-merged cleanly.
 
-**Integration worktree now HOLDs again** pending the next Chief directive.
-No further integration or gameplay work from `integration/` without an
-explicit Chief `GO`.
+**PARALLEL CYCLE 04 — ACTIVE.** A3 mining-system extraction is assigned to
+Aki; W3 dev-controls/diagnostics extraction is assigned to Orcha. The
+integration worktree HOLDs until both feature checkpoints are reviewed.
 
 ## Active branches
 - `refactor/modular-core` — integration branch (this file's home). Local
@@ -33,8 +33,8 @@ explicit Chief `GO`.
 - `main` — untouched by current work.
 
 ## Active directives
-See `CHIEF_DIRECTIVES.md`. CP3e is INTEGRATED. No directive is currently
-`STATUS: GO`; agents and the integration worktree HOLD for Chief.
+See `CHIEF_DIRECTIVES.md`. CP3e is INTEGRATED. A3 and W3 are `STATUS: GO`.
+The integration worktree remains HOLD while both agents work independently.
 
 ## Completed systems
 - Regional map overlay extraction (`src/render/map.js`)
@@ -50,7 +50,8 @@ See `CHIEF_DIRECTIVES.md`. CP3e is INTEGRATED. No directive is currently
   extents, and multi-pod connector continuity (INTEGRATED)
 
 ## Systems in progress
-- None currently assigned. HOLD — awaiting next Chief directive.
+- A3 — mining gameplay module extraction (Aki)
+- W3 — dev-controls/diagnostics render module extraction (Orcha)
 
 ## P0 / P1 / P2 defects
 - **P0:** None open.
