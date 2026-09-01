@@ -32,6 +32,26 @@ checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: Chief correction — HUD cargo-limit double-count
+- STATUS: COMPLETE — pushed to agent/world-ui, awaiting Chief review/integration
+- BRANCH: agent/world-ui
+- COMMIT: 0da8303 (agent/world-ui @ 9350a8c..0da8303)
+- FILES CHANGED: src/render/hud.js (cMax computation, +11/-2), _dev/hud_cargo_hover_verify.mjs (new capacity-correctness section, +97)
+- IMPLEMENTATION SUMMARY: Chief relayed Aki's finding: `ship.shipType.cargoLimit` is ALREADY the authoritative live cargo limit -- Core Gameplay's `applyCargoBonus()` (src/systems/docking.js, called at docking LOCK, `ship.shipType.cargoLimit += t.cargoBonus`) and `loadGame()`'s `_reattach` path (same additive pattern on reload) both keep it current as pods attach. My previous fix's `cMax` line, however, ALSO added `attachedPods.reduce((s,p)=>s+(p.cargoBonus||0),0)` on top of that already-updated value -- double-counting every attached pod's bonus (base 50 + one +25 pod really = 75, displayed as 75+25=100). Fixed by reading `ship.shipType.cargoLimit` (or `cargoLimitBase` as the pre-existing fallback for the no-shipType case) exactly once, with no re-derivation. The existing overflow clamp added in the prior checkpoint (`Math.min(Math.max(cUsed/Math.max(cMax,1),0),1)`) is completely untouched -- still reads whatever `cMax` now correctly resolves to. Numeric label (`cUsed + ' / ' + cMax`) is also untouched. No other files touched, per Chief's explicit "no other changes" instruction -- did not touch `applyCargoBonus()`, docking.js, save/load, or any Aki-owned cargo-calculation code.
+- TESTS / RESULTS: Extended `_dev/hud_cargo_hover_verify.mjs` with a new capacity-correctness section: three scenarios (base/0 pods, one pod +25, multiple pods +50) each fill cargo to EXACTLY the authoritative `cargoLimit` I set directly on `ship.shipType.cargoLimit` (simulating "applyCargoBonus() already ran," per Aki's/Chief's framing) and assert the rendered bar's fill reaches its own right edge (ratio must be exactly 1.0). Verified this check is genuinely discriminating, not just superficially passing: temporarily reintroduced the exact double-count bug in `hud.js` and re-ran -- it correctly FAILED (measured fill stopped at ~189px and ~171px respectively for the one-pod/multi-pod cases, closely matching the independently-predicted buggy positions of 189.0/170.7, while the fixed-behavior expectation is ~243px) -- then restored the real fix and re-confirmed all 23/23 checks clean. During that sanity pass I also found and fixed a genuine flaw in the check's OWN pixel-brightness threshold (unrelated to hud.js): the unlit cargo-track background measures ~61 brightness, uncomfortably close to my original `>60` threshold, causing a false "still filled" read at the exact boundary; raised to `>150`, safely between the unlit-track range (~55-65) and the lit-fill gradient's floor (~250+), confirmed via a raw per-pixel scan of the bar row. Re-ran `hud_layout_regression.mjs` (27/27, identical row counts to the pre-existing baseline at all 3 resolutions) and `phase0_smoke.mjs` (0 console/page errors, RUNTIME READY: PASS) to confirm zero cross-domain regression from this change.
+- RUNTIME / CONSOLE STATUS: PASS, 0 console/page errors.
+- KNOWN DELTAS: None in gameplay/rendering behavior beyond the corrected cargo-limit display math (which now under-reports relative to the previous, buggy over-report -- this IS the intended fix, not a regression).
+- KNOWN WARNINGS: None new this checkpoint.
+- BLOCKERS: None.
+- BUGS DISCOVERED: (1) The cargo-limit double-count itself (this checkpoint's fix, originally introduced by me in the prior checkpoint -- my mistake, corrected here per Chief's relay of Aki's finding). (2) A latent looseness in my own new test's pixel-brightness threshold, caught and fixed during my own sanity-check pass before this checkpoint was finalized (not shipped broken).
+- BAD NEWS / UNEXPECTED FINDINGS: The double-count bug was introduced BY ME in the immediately preceding checkpoint (commit f4d3793) -- I read `attachedPods.reduce(cargoBonus)` as still necessary without first confirming whether `ship.shipType.cargoLimit` already included pod bonuses elsewhere in the codebase. Lesson: when adding to a derived display value that combines multiple state sources (like a resource cap), explicitly trace whether one of those sources already accounts for the others before combining them, rather than assuming independence. Recording this so it isn't repeated on a future HUD/derived-value checkpoint.
+- QUESTIONS FOR CHIEF: NONE.
+- DECISIONS NEEDED FROM CHIEF: NONE.
+- RECOMMENDED NEXT ACTION: Chief review/integrate this checkpoint (and the prior cargo-bar-clamp + hover-presentation checkpoint, if not already integrated) into `refactor/modular-core`.
+- CURRENT HOLD/GO STATE: **HOLD.** Correction complete, tested (including a proven-discriminating regression check), committed, and pushed to `agent/world-ui`. Awaiting Chief review before any integration.
+
+---
+
 ### DIRECTIVE ID: Chief QA — HUD cargo bar clamp + hover presentation
 - STATUS: COMPLETE — pushed to agent/world-ui, awaiting Chief review/integration
 - BRANCH: agent/world-ui
