@@ -22,6 +22,9 @@ States: **WAITING → APPROVED → INTEGRATING → INTEGRATED** (or **REJECTED /
 | 9 | (direct, integration-pass fix) | (direct on refactor/modular-core) | — | ca6de88 | Fixed waitForDock() race condition in shared test harness (_dev/e_interaction_regression.mjs, _dev/phase1_pod_assembly_verify.mjs) discovered during Integration Pass 03's regression sweep. Chief-approved (Option 1). Test-harness-only; no gameplay code touched, no assertions weakened. |
 | 10 | CP3–CP3e | agent/core-gameplay | b298885 (CP3e implementation `9d62022`) | 692fc51 | Chief-approved CP3 lineage through CP3e merged via `git merge --no-ff`. One add/add conflict in `TEAM_NOTES.md` resolved by preserving both branches' findings. All authoritative geometry and functional regressions passed; CP3e pixel scan passed 25/25 on isolated final rerun after two transient 24/25 samples. No gameplay or art workaround added. |
 
+| 11 | Cycle 04 (Aki) | agent/core-gameplay | a2bf48f | 687e503 | hoveredTarget API contract verification (22/22, real DOM mouse events) + cargo cap enforcement fix (`getCargoLimit()` replaces stale `CARGO_LIMIT` const in cargoFull(), ore pickup, dev G-cheat, wreck recovery, diagnostics denom). New `_dev/cargo_cap_verify.mjs` (12/12). Merged via `git merge --no-ff`, zero conflicts. |
+| 12 | Chief QA + correction (Orcha) | agent/world-ui | 840eb66 | 8982d91 | HUD cargo-bar overflow fill clamp `[0,1]`; visible hover presentation (dashed ring + label) for Aki's `hoveredTarget`, granting no interaction range; corrected cargo-limit display double-count (reads `ship.shipType.cargoLimit` exactly once, per Aki's finding relayed by Chief). New `_dev/hud_cargo_hover_verify.mjs` (23/23, includes a capacity-correctness check proven discriminating by temporarily reintroducing the bug). Merged via `git merge --no-ff`, zero conflicts (disjoint file/line regions from Aki's changes, confirmed by diff-stat inspection before merging). |
+
 ## INTEGRATING
 
 *(none currently)*

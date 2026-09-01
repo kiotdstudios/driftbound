@@ -183,7 +183,12 @@ self-integrates. Both HOLD after pushing their checkpoint.
 - **ASSIGNED TO:** Aki / Core Gameplay
 - **BRANCH:** `agent/core-gameplay`
 - **BASELINE:** `refactor/modular-core @ 215ef49`
-- **STATUS:** GO
+- **STATUS:** CLOSED — superseded, not executed. Aki's Parallel Cycle 04 session
+  was redirected to a higher-priority cargo cap enforcement bug discovered
+  during hover-contract verification (see `agent/core-gameplay @ a2bf48f`,
+  integrated Pass 05 as `687e503`). Mining extraction remains available as a
+  future directive if still desired — re-issue as a new directive rather than
+  resuming this one, since the baseline has moved.
 - **OBJECTIVE:** Extract the existing mining gameplay state/update behavior from `src/main.js` into `src/systems/mining.js` using an explicit initialization/state interface. Behavior-preserving modularization only; do not redesign mining.
 - **REQUIREMENTS:**
   - Move mining target acquisition, mining cadence/damage, resource-drop mutation, and mining lifecycle state into the module where practical.
@@ -200,7 +205,13 @@ self-integrates. Both HOLD after pushing their checkpoint.
 - **ASSIGNED TO:** Orcha / World & UI
 - **BRANCH:** `agent/world-ui`
 - **BASELINE:** `refactor/modular-core @ 215ef49`
-- **STATUS:** GO
+- **STATUS:** CLOSED — superseded, not executed. Orcha's Parallel Cycle 04
+  session was redirected to two rounds of Chief QA fixes on the HUD cargo
+  bar/hover surface (overflow clamp, visible hover presentation, then a
+  cargo-limit display double-count correction) — see `agent/world-ui @
+  840eb66`, integrated Pass 05 as `8982d91`. Dev-controls extraction remains
+  available as a future directive if still desired — re-issue as a new
+  directive rather than resuming this one, since the baseline has moved.
 - **OBJECTIVE:** Extract the existing dev-controls panel and diagnostics overlay rendering from `src/main.js` into `src/render/devControls.js` with explicit state input. Behavior-preserving modularization only; no redesign.
 - **REQUIREMENTS:**
   - Module owns `drawDevControls` and `drawDiagnostics` presentation and their local presentation helpers/constants.

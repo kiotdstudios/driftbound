@@ -32,6 +32,28 @@ checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: Integration Pass 05
+- STATUS: COMPLETE — ready to push
+- BRANCH: refactor/modular-core (integration worktree — explicit Chief directive for this pass)
+- COMMIT: 687e503 (merge of agent/core-gameplay @ a2bf48f) + 8982d91 (merge of agent/world-ui @ 840eb66); baseline was 3b7d85b
+- FILES CHANGED: (merge of Aki) src/main.js, _dev/cargo_cap_verify.mjs (new), _dev/coordination/AKI_STATUS.md, _dev/coordination/TEAM_NOTES.md; (merge of Orcha) src/main.js, src/render/hud.js, _dev/hud_cargo_hover_verify.mjs (new), _dev/coordination/ORCHA_STATUS.md; (this pass, direct) _dev/coordination/PROJECT_STATUS.md, _dev/coordination/INTEGRATION_QUEUE.md
+- IMPLEMENTATION SUMMARY: Chief authorized Integration Pass 05 with explicit approved inputs (`agent/core-gameplay @ a2bf48f`, `agent/world-ui @ 840eb66`) and an explicit combined-suite list. Before merging, inspected both branches' diff stats against their common ancestor (`dd87160`) to confirm disjoint file/line regions: Aki's commit touched `src/main.js` only in cargo-enforcement call sites (cargoFull, ore pickup loop, dev G-cheat, wreck recovery, diagnostics ORE row, new `__DB` bridge getters) plus a new test file and coordination docs; my own prior commits touched `src/render/hud.js` (cargo cMax fix) and a disjoint region of `src/main.js` (new `drawHoverHighlight()` function + one call site) plus a different new test file. Merged Aki's branch first (`git merge --no-ff`, zero conflicts), then mine (`git merge --no-ff`, "Auto-merging src/main.js" reported but zero conflict markers — confirmed by `git status` showing no unmerged paths). Ran the full merge-integrity checklist (established in Integration Pass 03/04): dupe-declaration scan found 0 duplicate top-level functions across 76 and 0 duplicate top-level const/let across 147; confirmed draw order (`drawAttachedPods → drawHoverHighlight → hud.render → minimap.render → drawDevControls`) and update order (`update() → updateDocking(dt) → updateMining()`) both intact post-merge. Verified the merged dev server was actually serving the merged code (not a stale branch checkout) by curling `src/render/hud.js` and `src/main.js` directly and confirming both fixes' signature lines were present before running any test.
+- TEST RESULTS: All 13 Chief-specified suites run sequentially against the merged build, zero failures anywhere: `cargo_cap_verify` 12/12, `hud_cargo_hover_verify` 23/23, `hover_targeting_verify` 22/22, `cp3e_chain_render_verify` 25/25, `cp3_attached_pod_render_verify` 12/12, `cp2_docking_verify` 30/30, `phase1_pod_assembly_verify` 23/23, `hud_layout_regression` 27/27 (row counts identical to established baseline), `hud_zoom_regression` PASS (0 transform leaks, 5 zoom levels), `camera_roundtrip_verify` 36/36, `map_input_suppression_verify` 18/18, `phase0_smoke` PASS (`boosted: true`, 0 console errors), `e_interaction_regression` 25/25. Notably, the two tests with previously-documented environment-timing flakes (`phase0_smoke`, `e_interaction_regression`) passed 100% clean this run — no flake to classify this pass. All run sequentially per `DECISIONS.md` #13; killed all stray `python.exe`/`chrome.exe`/`node.exe` processes and started exactly one dev server rooted in the integration worktree before testing.
+- RUNTIME READY: PASS
+- CONSOLE ERRORS: 0 across every suite.
+- KNOWN DELTAS: None beyond the Chief-approved lineages (cargo cap enforcement fix, hoveredTarget contract verification, cargo-bar clamp, hover presentation, cargo-limit display correction).
+- KNOWN WARNINGS: Three pre-existing, out-of-scope test-harness items surfaced/reconfirmed during this pass (none block CI, none touched): (1) `phase0_review_verify.mjs` still references the stale `KeyR` dev-cheat binding (rebound to `KeyG` before this pass, in `3a952e3`); (2) `phase0_saveload_verify.mjs`'s fixed 70s wall-clock wait is frame-count-sensitive, not wall-clock-robust; (3) `pod_art_check.mjs`/`mining_zoom_regression.mjs`/`boost_regression.mjs` informational-only lines noted in prior passes. All three logged as a candidate future test-harness cleanup directive in `PROJECT_STATUS.md`.
+- BLOCKERS: None.
+- BUGS DISCOVERED: No new production bugs. Both merges were clean with no semantic surprises (confirmed via the merge-integrity checklist).
+- BAD NEWS / UNEXPECTED FINDINGS: None. This pass was unusually clean — both branches' authors (Aki and I) had already independently avoided touching each other's owned files/regions, so the merge risk that materialized in earlier passes (e.g. Integration Pass 03's `waitForDock()` shared-test-file race) did not recur here.
+- RECOMMENDED NEXT ACTION: HOLD for Chief's next directive. Candidate follow-ups (not started, no feature work begun per this pass's explicit instruction): the deferred A3 (mining extraction)/W3 (dev-controls extraction) work from Parallel Cycle 04, now closed without execution; the test-harness cleanup backlog noted above.
+- CURRENT HOLD/GO STATE: HOLD. Integration Pass 05 complete. Both feature branches and the integration worktree HOLD pending Chief's next directive.
+- PUSHED TO GITHUB: Yes — see final integration SHA reported to Chief after this checkpoint and the `PROJECT_STATUS.md`/`INTEGRATION_QUEUE.md` updates are committed together.
+- QUESTIONS FOR CHIEF: NONE.
+- DECISIONS NEEDED FROM CHIEF: NONE.
+
+---
+
 ### DIRECTIVE ID: Chief correction — HUD cargo-limit double-count
 - STATUS: COMPLETE — pushed to agent/world-ui, awaiting Chief review/integration
 - BRANCH: agent/world-ui
