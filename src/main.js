@@ -162,7 +162,10 @@ const CARGO_LIMIT  = SHIP_TYPE.cargoLimit;
 
 // Total cargo units used (Nebulite + Armalcolite share the hold)
 function cargoUsed() { return ship.ore + ship.armalcolite; }
-function cargoFull()  { return cargoUsed() >= CARGO_LIMIT; }
+// getCargoLimit() reads ship.shipType.cargoLimit (live, updated when pods attach);
+// CARGO_LIMIT is kept as a frozen bootstrap fallback only.
+function getCargoLimit() { return ship.shipType?.cargoLimit ?? CARGO_LIMIT; }
+function cargoFull()  { return cargoUsed() >= getCargoLimit(); }
 
 function rehydrateAsteroid(a) {
   if (a.type && a.type.w) return a;  // already has full type, nothing to do
@@ -839,10 +842,15 @@ const DEV_COMMANDS = {
   KeyG: {
     key: 'KeyG', label: 'G — Give Test Resources',
     exec() {
-      ship.ore          += 25;
-      ship.mineral      += 10;
-      ship.armalcolite  += 5;
-      showToast('DEV: +25 Nebulite  +10 Mineral  +5 Armalcolite', '#00ff88');
+      // Cap each grant at remaining capacity so the dev cheat can never
+      // push cargo above the live limit (which changes with attached pods).
+      const _limit = getCargoLimit();
+      const _oreGrant = Math.min(25, Math.max(0, _limit - cargoUsed()));
+      ship.ore         += _oreGrant;
+      ship.mineral     += 10;   // mineral is not capped by cargoLimit (crafting material)
+      const _armGrant = Math.min(5, Math.max(0, _limit - cargoUsed()));
+      ship.armalcolite += _armGrant;
+      showToast('DEV: +' + _oreGrant + ' Nebulite  +10 Mineral  +' + _armGrant + ' Armalcolite', '#00ff88');
       DevLog.info('DevCheat', 'DEV CHEAT: Test resources granted');
     },
   },
@@ -1429,13 +1437,13 @@ function updateMining() {
     const d = Math.hypot(ore.worldX - camX, ore.worldY - camY);
 
     if (d < ORE_COLLECT_R) {
-      const space = CARGO_LIMIT - cargoUsed();
-      if (space <= 0) { showToast('⚠ CARGO FULL — ' + cargoUsed() + '/' + CARGO_LIMIT, '#ef4444'); orePickups.splice(i, 1); continue; }
+      const space = getCargoLimit() - cargoUsed();
+      if (space <= 0) { showToast('⚠ CARGO FULL — ' + cargoUsed() + '/' + getCargoLimit(), '#ef4444'); orePickups.splice(i, 1); continue; }
       const take = Math.min(ore.amount, space);
 
       ship.ore += take;
 
-      showToast('+' + take + ' NEBULITE  [' + cargoUsed() + '/' + CARGO_LIMIT + ']');
+      showToast('+' + take + ' NEBULITE  [' + cargoUsed() + '/' + getCargoLimit() + ']');
 
       // Loot drop — check parent asteroid's loot
       if (ore.lootType && Math.random() < ore.lootChance) {
@@ -1443,7 +1451,7 @@ function updateMining() {
           ship.mineral++;
           showToast('✦ MINERAL MATERIAL found! (' + ship.mineral + ' held)', '#a78bfa');
         } else if (ore.lootType === 'armalcolite') {
-          if (cargoUsed() < CARGO_LIMIT) {
+          if (cargoUsed() < getCargoLimit()) {
             ship.armalcolite++;
             showToast('◈ ARMALCOLITE  [' + ship.armalcolite + ' held]  —  [C] to refine → fuel', '#34d399');
           } else {
@@ -1998,9 +2006,11 @@ function tryClaimWorldPod() {
       if (pod.type === '_wreck') {
         // Recover wreck cargo
         const c = pod.cargo || {};
-        ship.ore          += (c.ore          || 0);
-        ship.mineral      += (c.mineral      || 0);
-        ship.armalcolite  += (c.armalcolite  || 0);
+        // Partial recovery: clamp each resource type to remaining cargo space.
+        const _wSpace = () => Math.max(0, getCargoLimit() - cargoUsed());
+        const _wOre  = Math.min(c.ore  || 0, _wSpace()); ship.ore  += _wOre;
+        ship.mineral += (c.mineral || 0); // mineral bypasses cargo cap (crafting material)
+        const _wArm  = Math.min(c.armalcolite || 0, _wSpace()); ship.armalcolite += _wArm;
         worldPods.splice(i, 1);
         const recovered = [c.ore&&(c.ore+' Nebulite'), c.mineral&&(c.mineral+' Mineral'), c.armalcolite&&(c.armalcolite+' Armalcolite')].filter(Boolean).join(', ');
         showToast('CARGO RECOVERED  ' + (recovered || '(empty)'), '#f97316');
@@ -2797,7 +2807,7 @@ function drawDiagnostics() {
     { label:'LOG WARNINGS', val: warnCount,                           col: warnCount > 0 ? WARN : COL },
     { label:'FUEL',         val: ship.fuel.toFixed(2)+' / '+FUEL_CAPACITY, col: COL },
     { label:'HULL',         val: ship.hp+' / '+SHIP_MAX_HP,          col: ship.hp < 30 ? ERR : COL },
-    { label:'ORE',          val: cargoUsed()+' / '+CARGO_LIMIT,      col: COL },
+    { label:'ORE',          val: cargoUsed()+' / '+getCargoLimit(),      col: COL },
     { label:'MAP MODE',     val: regionalMap.isOpen() ? 'OPEN' : 'CLOSED',        col: COL },
     { label:'INTERIOR',     val: interiorMode ? 'YES' : 'NO',        col: COL },
     { label:'THRUST INPUT', val: _thrusting ? 'ON' : 'OFF',           col: _thrusting ? WARN : DIM },
@@ -4307,6 +4317,13 @@ window.__DB = {
   get DOCK_STATE(){ return DOCK_STATE; },
   // -- CP3b hover test bridge --
   get hoveredTarget(){ return hoveredTarget; },
+  // cargo capacity bridge — live dynamic limit (reflects attached pod bonuses)
+  get cargoLimit(){ return getCargoLimit(); },
+  get cargoUsed(){ return cargoUsed(); },
+  get cargoFull(){ return cargoFull(); },
+  get orePickups(){ return orePickups; },
+  // dev command executor — fires the named DEV_COMMANDS key's exec() (test use only)
+  devCheatExec(keyCode){ if (DEV_MODE && DEV_COMMANDS[keyCode]) DEV_COMMANDS[keyCode].exec(); },
   getInteractionCandidates(){ return getInteractionCandidates(); },
   get attachedPodRenderSize(){ return getAttachedPodRenderSize(); },
   // -- CP3c connector-placement test bridge --

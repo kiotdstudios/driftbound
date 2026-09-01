@@ -220,3 +220,87 @@ that this server is serving the current build (~126.13, matching CP3b-2).
   (stale server on port 8420 answering ahead of the fresh one). CP3b-2
   (`0655257`) is closed as correct. No further code changes needed from Aki
   on this directive.
+
+### [2026-08-31] hoveredTarget API contract — logged by Aki
+
+- CATEGORY: cross-agent note (API contract)
+- AFFECTS: Orcha (presentation/UI), Aki (Core Gameplay — owns this data), any future agent consuming hover state
+- DETAIL:
+
+`window.__DB.hoveredTarget` is the authoritative, frame-current hover target.
+It is set once per game loop tick by `updateHover()` in `src/main.js` via
+`resolveHover(worldX, worldY, getInteractionCandidates())`. It is `null` when
+nothing is under the cursor, or an object with this guaranteed shape:
+
+```
+{
+  type:       string,    // 'world_pod' | 'attached_pod' | 'asteroid'
+  id:         string,    // unique id for the object (pod.pid, asteroid.aid, modId)
+  worldX:     number,    // world-space X position of the target's center
+  worldY:     number,    // world-space Y position of the target's center
+  hitRadius:  number,    // world-space hit-test radius used to resolve this target
+  ref:        object,    // direct reference to the underlying game object (read-only for display)
+}
+```
+
+**Source of each field per type:**
+
+| type | id | worldX / worldY | hitRadius |
+|---|---|---|---|
+| `world_pod` | `pod.pid` | `pod.worldX / pod.worldY` | 60 (matches beacon ring) |
+| `attached_pod` | `modId` (shipAssembly key) | `ship.worldX + rotLocal(getNodeRenderOffset(modId)).x/y` | `getAttachedPodRenderSize() / 2` |
+| `asteroid` | `ast.id` or `ast` | `ast.worldX / ast.worldY` | derived from asteroid type bbox × scale |
+
+**Stability guarantees for Orcha presentation:**
+- The `type`, `id`, `worldX`, `worldY`, `hitRadius`, and `ref` fields are
+  stable — do not depend on undocumented internals.
+- `hoveredTarget` is updated via real DOM `mousemove` events (not synthetic
+  state) through `initMouseTracking()` in `src/core/input.js`.
+- `worldX`/`worldY` for `attached_pod` tracks the flush render position (from
+  `getNodeRenderOffset()`), not the raw graph `local_position` — these are the
+  same coordinates that drive the visual render, so hit position matches what
+  the player sees.
+- `hoveredTarget` is NEVER the docking-in-flight pod (it is excluded from
+  candidates while `isDocking()` is true).
+- `hoveredTarget` does NOT gate or consume the E-key action.
+  `src/systems/interactions.js` is the only E-resolver.
+  Orcha can read hover state freely without risk of double-consuming E.
+
+**Verified (2026-08-31):** `hover_targeting_verify.mjs` drives real DOM mouse
+events via `page.mouse.move()` and confirms all three target types resolve
+correctly at all five zoom levels. 22/22 passing against HEAD `dd87160` + cargo
+fix working tree.
+
+- FOLLOW-UP: If Orcha adds a hover-tooltip or cursor-highlight layer, read
+  `window.__DB.hoveredTarget` directly from the render loop — it is updated
+  before `draw*()` calls in `loop()`. No additional bridge property is needed.
+
+---
+
+### [2026-08-31] HUD cargo max double-counts pod bonuses — logged by Aki (Orcha-owned bug)
+
+- CATEGORY: cross-agent bug report (Orcha owns `src/render/hud.js`)
+- AFFECTS: Orcha (must fix), Chief (visual discrepancy in HUD display), Aki (informational — will not touch `src/render/hud.js`)
+- SEVERITY: UI display bug — shows inflated cargo max (e.g., 100 instead of 75 with one pod attached). Does NOT affect actual cargo enforcement.
+
+**Root cause:**
+`src/render/hud.js` lines 89–90 compute the displayed cargo max as:
+```
+cMax = ship.shipType.cargoLimit + attachedPods.reduce((acc, p) => acc + (p.cargoBonus ?? 0), 0)
+```
+This adds pod cargo bonuses on top of `ship.shipType.cargoLimit` — but `applyCargoBonus()` in `src/main.js` already mutates `ship.shipType.cargoLimit` when a pod attaches. The bonus is therefore counted twice: once when the pod was attached (by `applyCargoBonus`) and again live in this reduce expression.
+
+**Example (one pod with +25 bonus):**
+- Base limit: 50
+- After pod attaches, `ship.shipType.cargoLimit` = 75 (correct, via `applyCargoBonus`)
+- `cMax` displayed: 75 + 25 = **100** (WRONG — should be 75)
+
+**Correct fix (Orcha):** Remove the `attachedPods.reduce(...)` term entirely. `ship.shipType.cargoLimit` already is the current authoritative cap:
+```
+cMax = ship.shipType.cargoLimit;
+```
+This matches `getCargoLimit()` in `src/main.js` (the enforcement source of truth added this checkpoint).
+
+**Do NOT fix in `src/main.js`:** Aki's cargo enforcement uses `getCargoLimit()` which reads `ship.shipType.cargoLimit` directly — enforcement is already correct. This is a display-only bug in `hud.js`.
+
+**Discovered:** During Parallel Cycle 04 cargo cap enforcement work (2026-08-31).
