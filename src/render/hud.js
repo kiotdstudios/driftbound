@@ -86,8 +86,17 @@ export function createHUD(ctx, canvas) {
     const fuelPct    = ship.fuel / fuelCapacity;
     const hpPct      = ship.hp / shipMaxHp;
     const cUsed      = ship.ore + ship.armalcolite;
-    const cMax       = (ship.shipType ? ship.shipType.cargoLimit : cargoLimitBase) +
-                       attachedPods.reduce((s, p) => s + (p.cargoBonus || 0), 0);
+    // Chief correction (2026-08-31): ship.shipType.cargoLimit is ALREADY the
+    // authoritative live cargo limit -- Core Gameplay's applyCargoBonus()
+    // (src/systems/docking.js -> src/main.js) mutates it additively at
+    // docking LOCK, and loadGame()'s _reattach path rebuilds it the same
+    // way on reload. This line previously ALSO added
+    // attachedPods.reduce(cargoBonus) on top of that already-updated value,
+    // double-counting every attached pod's bonus (e.g. base 50 + one +25
+    // pod really = 75, but displayed as 75 + 25 = 100). Read the live
+    // value exactly once -- do not re-derive or re-sum pod bonuses here.
+    const cMax       = ship.shipType ? ship.shipType.cargoLimit : cargoLimitBase;
+
     const cFull      = cUsed >= cMax;
     const boostOn    = boosting && ship.fuel > 0;
     const fuelLow    = fuelPct < 0.2;

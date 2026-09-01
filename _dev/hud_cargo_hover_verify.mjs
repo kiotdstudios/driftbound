@@ -104,6 +104,103 @@ for (const [vw, vh] of VIEWPORTS) {
   }
 }
 
+// ── Part A2: cargo-limit double-count regression (Chief correction) ─────
+// Aki confirmed ship.shipType.cargoLimit is ALREADY the authoritative live
+// cargo limit (applyCargoBonus() mutates it additively at docking LOCK /
+// on reload) -- hud.js must read it exactly once for cMax, not add
+// attachedPods.reduce(cargoBonus) again on top. Proven here by driving
+// ship.shipType.cargoLimit directly (simulating "applyCargoBonus() already
+// ran") together with a matching attachedPods array, then filling cargo to
+// EXACTLY that authoritative limit and confirming the rendered bar fills
+// all the way to its own right edge. If the double-count regression were
+// present, a real fill of cargoLimit would compute against an inflated
+// cMax (cargoLimit + re-summed bonuses), so the bar would visibly stop
+// short of the right edge instead of reaching it -- that shortfall is
+// exactly what each assertion below would catch.
+// HUD is a fixed-pixel, screen-space, zoom-independent panel (PX/PW are
+// absolute screen offsets, already proven zoom/resolution-invariant by
+// hud_zoom_regression.mjs + hud_layout_regression.mjs) -- one fixed
+// viewport is sufficient to validate this geometry-based numeric check.
+async function setupCargoLimitScenario({ cargoLimit, pods, cUsed }) {
+  await page.evaluate(({ cargoLimit, pods, cUsed }) => {
+    const DB = window.__DB;
+    DB.hudBounds = [];
+    DB.diagMode = true;
+    DB.ship.fuel = DB.FUEL_CAPACITY;
+    DB.ship.hp = DB.SHIP_MAX_HP;
+    // Simulates the state AFTER Core Gameplay's applyCargoBonus() has
+    // already run (per Chief's correction) -- cargoLimit here IS the
+    // final authoritative value, bonuses already folded in.
+    DB.ship.shipType.cargoLimit = cargoLimit;
+    DB.attachedPods.length = 0;
+    for (const p of pods) DB.attachedPods.push(p);
+    DB.ship.ore = cUsed;
+    DB.ship.mineral = 0;
+    DB.ship.armalcolite = 0;
+  }, { cargoLimit, pods, cUsed });
+}
+
+async function readCargoBarFillEdge() {
+  return await page.evaluate(() => {
+    const DB = window.__DB;
+    const bounds = DB.hudBounds.slice();
+    const PX = 14, PW = 240, PAD_X = 10, B_OFF = 5, B_H = 6;
+    const L = PX + PAD_X, cbw = PW - PAD_X * 2;
+    const cbx = L, cbxRight = L + cbw;
+    const barBounds = bounds[9]; // see hud_cargo_hover_verify.mjs Part A comment: stable index, pod-detail rows are appended AFTER the cargo bar
+    if (!barBounds) return { ok: false, reason: 'cargo bar hudBounds index missing', boundsLen: bounds.length };
+    const cby = barBounds.y0 + B_OFF;
+    const ctx = document.getElementById('game').getContext('2d');
+    const brightnessAt = (x) => { const d = ctx.getImageData(Math.round(x), Math.round(cby + B_H / 2), 1, 1).data; return d[0] + d[1] + d[2]; };
+    // Scan right-to-left from just inside the bar's own right border to
+    // find the rightmost pixel that is still "fill" (bright) rather than
+    // background (dim) -- i.e. the actual rendered fill edge.
+    // Threshold calibrated well above the unlit dark-track background
+    // (measured ~55-65, including its border-stroke pixels) and well
+    // below the lit fill gradient's floor (measured ~250+ at the fill's
+    // left edge, rising toward the right) -- 150 sits safely in between.
+    let fillEdgeX = cbx; // default: nothing filled
+    for (let x = cbxRight - 2; x >= cbx; x -= 1) {
+      if (brightnessAt(x) > 150) { fillEdgeX = x + 1; break; }
+    }
+    return { ok: true, fillEdgeX, cbx, cbxRight, cUsed: DB.ship.ore + DB.ship.armalcolite, cargoLimit: DB.ship.shipType.cargoLimit };
+  });
+}
+
+await page.setViewportSize({ width: 1920, height: 1080 });
+await page.evaluate((idx) => window.__DB.camera.setZoomIndex(idx), 1);
+
+const CAPACITY_SCENARIOS = [
+  { name: 'base (0 pods)',       cargoLimit: 50,  pods: [], cUsed: 50 },
+  { name: 'one pod (+25)',       cargoLimit: 75,  pods: [{ label: 'CARGO POD', color: '#38bdf8', cargoBonus: 25 }], cUsed: 75 },
+  { name: 'multiple pods (+50)', cargoLimit: 100, pods: [{ label: 'CARGO POD A', color: '#38bdf8', cargoBonus: 25 }, { label: 'CARGO POD B', color: '#a78bfa', cargoBonus: 25 }], cUsed: 100 },
+];
+
+for (const s of CAPACITY_SCENARIOS) {
+  await setupCargoLimitScenario(s);
+  await page.waitForTimeout(150);
+  const r = await readCargoBarFillEdge();
+  checks++;
+  if (!r.ok) {
+    fail++;
+    console.log(`[capacity] ${s.name.padEnd(18)} FAIL: ${r.reason} (boundsLen=${r.boundsLen})`);
+    continue;
+  }
+  // Correct behavior: cUsed === cargoLimit -> ratio 1.0 -> fill reaches
+  // (within a couple px of) the bar's own right edge.
+  const expectedFullX = r.cbxRight;
+  // What the OLD double-count bug would have produced, for a readable log
+  // line only (not asserted against -- the assertion is against correct
+  // behavior, this is just to show the discriminating gap).
+  const buggyCMax = s.cargoLimit + s.pods.reduce((sum, p) => sum + (p.cargoBonus || 0), 0);
+  const buggyX = r.cbx + (r.cbxRight - r.cbx) * Math.min(1, r.cUsed / buggyCMax);
+  const reachesEdge = Math.abs(r.fillEdgeX - expectedFullX) <= 3;
+  const authoritative = r.cargoLimit === s.cargoLimit; // sanity: hud.js read the exact value we set, nothing recomputed it
+  const ok = reachesEdge && authoritative;
+  if (!ok) fail++;
+  console.log(`[capacity] ${s.name.padEnd(18)} cargoLimit=${r.cargoLimit} cUsed=${r.cUsed} fillEdgeX=${r.fillEdgeX.toFixed(1)} expectedFullX=${expectedFullX} (buggy-would-be≈${buggyX.toFixed(1)}) ${ok ? 'OK' : 'FAIL'}`);
+}
+
 // ── Part B: hover presentation ───────────────────────────────────────────
 // Place each target type exactly at the ship's own world position so it
 // always renders at screen center regardless of zoom/resolution, then move
