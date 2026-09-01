@@ -2101,6 +2101,63 @@ function drawAttachedPods(cx, cy) {
   }
 }
 
+// ─── HOVER HIGHLIGHT (Chief QA) ───────────────────────────────────────────────
+// Pure presentation for Aki's hoveredTarget (see hover.js / updateHover()
+// above). Reads hoveredTarget only -- never gates, computes, or duplicates
+// the E-key resolver in src/systems/interactions.js, and never grants or
+// checks interaction range. Uses the target's own hitRadius (already the
+// authoritative radius each candidate was hit-tested against -- no new
+// radius/size logic introduced here). Drawn last among world-space objects
+// each frame so the outline/label sits visibly on top of whichever pod or
+// asteroid is currently hovered, regardless of which earlier draw call
+// painted that object.
+function drawHoverHighlight(cx, cy) {
+  if (!hoveredTarget) return;
+
+  const sx = cx + (hoveredTarget.worldX - ship.worldX);
+  const sy = cy + (hoveredTarget.worldY - ship.worldY);
+  const r  = hoveredTarget.hitRadius;
+  const t  = Date.now() * 0.001;
+  const pulse = 0.65 + 0.35 * Math.sin(t * 3.2);
+
+  // Concise label per target family -- derived from existing data only
+  // (POD_TYPES / asteroid type id); no new gameplay data introduced.
+  let label = 'TARGET';
+  if (hoveredTarget.type === 'world_pod') {
+    const pt = POD_TYPES[hoveredTarget.ref.type] || {};
+    label = pt.label || 'POD';
+  } else if (hoveredTarget.type === 'attached_pod') {
+    label = hoveredTarget.ref.label || 'ATTACHED POD';
+  } else if (hoveredTarget.type === 'asteroid') {
+    const tid = (hoveredTarget.ref.type && hoveredTarget.ref.type.id) || 'asteroid';
+    label = tid.toUpperCase().replace(/_/g, ' ');
+  }
+
+  // Dashed outline ring -- visually distinct from the solid teal mine-range
+  // box (drawAsteroids) and the pod attach beacon ring (drawWorldPods), so
+  // "cursor is pointing at this" never reads as "this is in E range".
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.arc(sx, sy, r + 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffffcc';
+  ctx.shadowColor = '#ffffff';
+  ctx.shadowBlur = 4;
+  ctx.fillText(label, sx, sy - r - 12);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
 function drawOrePickups(cx, cy) {
 
   const camX = ship.worldX, camY = ship.worldY;
@@ -3481,6 +3538,7 @@ function loop(now) {
   // the ship sprite drawn on top of it. Render-order fix only -- CP2 graph
   // data (local_position / CONNECTOR_GAP) is untouched.
   drawAttachedPods(cx, cy);
+  drawHoverHighlight(cx, cy);  // Chief QA: visible presentation for hoveredTarget
   restoreWorldTransform(ctx);
 
   // DEV transform-leak assertion: HUD must render in identity screen space.

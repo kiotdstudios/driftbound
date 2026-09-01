@@ -356,7 +356,13 @@ export function createHUD(ctx, canvas) {
     const cg = ctx.createLinearGradient(cbx, 0, cbx + cbw, 0);
     cg.addColorStop(0, '#1e5a7a'); cg.addColorStop(1, cFull ? ERR : ACC);
     ctx.fillStyle = cg;
-    ctx.fillRect(cbx, cby, cbw * (cUsed / Math.max(cMax, 1)), cbh);
+    // Chief QA fix: clamp fill ratio to [0,1] so the bar never draws outside
+    // its own bounds regardless of data (e.g. dev cheats or any future path
+    // that lets cUsed exceed cMax). Same clamp pattern already used by
+    // barRow() above. The numeric "cUsed / cMax" label above is untouched --
+    // it stays truthful even when the bar itself is visually capped.
+    const cargoFillRatio = Math.min(Math.max(cUsed / Math.max(cMax, 1), 0), 1);
+    ctx.fillRect(cbx, cby, cbw * cargoFillRatio, cbh);
     ctx.strokeStyle = '#ffffff0c'; ctx.lineWidth = 0.5;
     ctx.strokeRect(cbx, cby, cbw, cbh);
     y += B_OFF + B_H + 5;
