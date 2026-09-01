@@ -32,6 +32,27 @@ checkpoint commit.
 
 ---
 
+### DIRECTIVE ID: Check-in — Parallel Cycle 04 readiness (W3)
+- STATUS: CHECK-IN — no implementation started yet
+- BRANCH: agent/world-ui
+- COMMIT: dd87160 (worktree fast-forwarded locally from e6944ea to the current refactor/modular-core tip in preparation for W3; NOT yet pushed to origin/agent/world-ui, which still points at e6944ea — nothing to push yet since no new commits exist on top, only a clean fast-forward)
+- FILES CHANGED: None this checkpoint. Documentation only (this entry).
+- IMPLEMENTATION SUMMARY: Checked in per Chief Communication Protocol before doing any further work, since significant state had changed since my last checkpoint (`ecd2c1d`) without my direct visibility into every intermediate step. Reviewed `PROJECT_STATUS.md`, `CHIEF_DIRECTIVES.md`, `TEAM_NOTES.md`, `INTEGRATION_QUEUE.md`, `DECISIONS.md`, and `ORCHA_STATUS.md` end-to-end. Confirmed: (1) the pod/connector-placement-overlap bug (originally raised to me by the user) was correctly Aki's ownership domain per `OWNERSHIP.md`/`DECISIONS.md` #11 (docking/connector/assembly = Core Gameplay), was root-caused and fixed by Aki across CP3b→CP3e, Chief-reviewed against real screenshots, and integrated in Integration Pass 04 (`692fc51`/`cd1a6cf`) — I never touched docking/connector code, so there is no scope conflict or duplicated work; (2) `refactor/modular-core` is now at `dd87160` ("Chief: authorize Parallel Cycle 04"), with `A3` (Aki, mining-system extraction) and `W3` (me, dev-controls/diagnostics-overlay extraction into `src/render/devControls.js`) both `STATUS: GO`, baseline `refactor/modular-core @ 215ef49` (superseded in practice by the later coordination-only commits through `dd87160`, all of which are non-code); (3) my `agent-world-ui` worktree was already fast-forwarded locally from `e6944ea` to `dd87160` (verified via `git reflog`: a clean fast-forward merge, not a reset/rewrite — `e6944ea` and `215ef49` are both confirmed ancestors of `dd87160`) — worktree is clean, no uncommitted changes, ready to begin W3 the moment I'm told to proceed. Have NOT started any W3 implementation (no `src/render/devControls.js` exists yet, `src/main.js` untouched beyond the sync). Did not edit `AKI_STATUS.md` or any Aki-owned file.
+- TESTS / RESULTS: N/A — no code changed this checkpoint.
+- RUNTIME / CONSOLE STATUS: N/A — no code changed this checkpoint.
+- KNOWN DELTAS: None.
+- KNOWN WARNINGS: None new. Carrying forward the already-logged known-flaky-test list in `PROJECT_STATUS.md` (unchanged).
+- BLOCKERS: None.
+- BUGS DISCOVERED: None this checkpoint.
+- BAD NEWS / UNEXPECTED FINDINGS: None. Everything found on review was consistent and expected (Integration Pass 04 and Aki's CP3 work were already fully and correctly logged on GitHub before this check-in — the protocol worked as intended, I was able to reconstruct full state from GitHub alone without asking the user to relay anything).
+- QUESTIONS FOR CHIEF: NONE.
+- DECISIONS NEEDED FROM CHIEF: NONE.
+- RECOMMENDED NEXT ACTION: Begin W3 (dev-controls/diagnostics extraction) on `agent/world-ui` per the existing `STATUS: GO` directive, unless Chief/user wants to hold for any reason.
+- CURRENT HOLD/GO STATE: **Ready to GO on W3** — synced worktree, no blockers, awaiting explicit go-ahead in this session before starting implementation (per the user's most recent instruction, which was specifically "check in with chief," not "begin W3").
+- PUSHED TO GITHUB: This entry — yes, pending commit+push below. No feature code exists yet to push.
+
+---
+
 ### DIRECTIVE ID: Integration Pass 04 (CP3–CP3e)
 - STATUS: COMPLETE — ready to push
 - BRANCH: refactor/modular-core
